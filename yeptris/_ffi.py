@@ -158,6 +158,13 @@ _lib.yeptris_node_map_add.argtypes = [_p, ctypes.c_char_p, _sz, _p]
 _lib.yeptris_node_map_add.restype = ctypes.c_int
 _lib.yeptris_node_map_add_node.argtypes = [_p, _p, _p]
 _lib.yeptris_node_map_add_node.restype = ctypes.c_int
+_lib.yeptris_document_build.argtypes = [_p, ctypes.c_void_p, _sz,
+                                        ctypes.c_char_p, _sz]
+_lib.yeptris_document_build.restype = ctypes.c_int
+
+# YeptrisBuildEntry: op, style, reserved, off, len — 12 bytes, pinned
+BUILD_ENTRY = struct.Struct("<BBHII")
+BUILD_SCALAR, BUILD_SEQ, BUILD_MAP, BUILD_END = 1, 2, 3, 4
 
 _lib.yeptris_serialize.argtypes = [_p, ctypes.POINTER(_sz)]
 _lib.yeptris_serialize.restype = ctypes.c_char_p
