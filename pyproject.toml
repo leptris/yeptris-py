@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yeptris"
+version = "0.1.0.dev0"
+description = "YAML for Python at libleptris speed — an FFI-based (no C extension) binding over libyeptris, PyYAML-compatible"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Ribose Inc.", email = "open.source@ribose.com" }]
+keywords = ["yaml", "parser", "libyaml", "pyyaml"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/leptris/yeptris"
+Source = "https://github.com/leptris/yeptris-py"
+
+[project.optional-dependencies]
+test = ["pytest", "pyyaml"]
+
+[tool.setuptools]
+packages = ["yeptris"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
