@@ -163,6 +163,6 @@ def dump(value, *, sort_keys: bool = True) -> str:
         out = F._lib.yeptris_serialize(doc, ctypes.byref(length))
         if not out:
             raise F.YeptrisError("serialize failed")
-        return out[: length.value].decode("utf-8")
+        return F.read_owned(out, length.value).decode("utf-8")
     finally:
         F._lib.yeptris_document_free(doc)
