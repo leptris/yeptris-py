@@ -24,14 +24,15 @@ _NULL_WORDS = {"", "~", "null"}
 _BOOL_WORDS = {"y", "yes", "n", "no", "true", "false", "on", "off"}
 
 
-_SAFE_WORD = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9_\-./]*$")
+_SAFE_WORD = __import__("re").compile(r"^[A-Za-z][A-Za-z0-9_\-./ ]*$")
 
 
 def _plain_ok(text: str) -> bool:
-    # fast lane: a letter-started word of safe characters can be no
-    # number, timestamp, or indicator shape — only the reserved words
-    # (null/bool) can still reshape, and the set lookup is cheap
-    if _SAFE_WORD.match(text) is not None and text[0].isalpha() and \
+    # fast lane: a letter-started word of safe characters (spaces
+    # allowed, no trailing space — it would be eaten on reparse) can
+    # be no number, timestamp, or indicator shape; only the reserved
+    # words can still reshape, and the set lookups are cheap
+    if _SAFE_WORD.match(text) is not None and not text.endswith(" ") and \
             text.lower() not in _NULL_WORDS and text.lower() not in _BOOL_WORDS:
         return True
     if text != text.strip() or not text:
