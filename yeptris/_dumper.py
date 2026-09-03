@@ -72,33 +72,43 @@ _MAX_DEPTH = 500
 
 def _entries(value, emit, blob, depth, sort_keys):
     """Emits build entries (document order) and blob slices; returns
-    True on success, False on unsupported nesting depth."""
+    True on success, False on unsupported nesting depth. The scalar
+    arms are fully inlined — one function call per node was a
+    measurable fraction of the walk in CPython."""
     if depth > _MAX_DEPTH:
         return False
 
-    def scalar(text, plain):
-        buf = text.encode("utf-8")
-        emit(F.BUILD_SCALAR,
-             F.STYLE_PLAIN if plain else F.STYLE_DOUBLE_QUOTED,
-             len(blob), len(buf))
-        blob.extend(buf)
-
     if value is None:
-        scalar("null", True)
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), 4)
+        blob += b"null"
     elif value is True:
-        scalar("true", True)
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), 4)
+        blob += b"true"
     elif value is False:
-        scalar("false", True)
-    elif isinstance(value, int):
-        scalar(str(value), True)
-    elif isinstance(value, float):
-        scalar(_float_text(value), True)
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), 5)
+        blob += b"false"
+    elif type(value) is int:
+        buf = str(value).encode()
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
+        blob += buf
+    elif type(value) is float:
+        buf = _float_text(value).encode()
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
+        blob += buf
+    elif type(value) is str:
+        buf = value.encode("utf-8")
+        emit(F.BUILD_SCALAR,
+             F.STYLE_PLAIN if _plain_ok(value) else F.STYLE_DOUBLE_QUOTED,
+             len(blob), len(buf))
+        blob += buf
     elif isinstance(value, _dt.datetime):
-        scalar(value.isoformat(sep=" "), True)
+        buf = value.isoformat(sep=" ").encode()
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
+        blob += buf
     elif isinstance(value, _dt.date):
-        scalar(value.isoformat(), True)
-    elif isinstance(value, str):
-        scalar(value, _plain_ok(value))
+        buf = value.isoformat().encode()
+        emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
+        blob += buf
     elif isinstance(value, dict):
         emit(F.BUILD_MAP, 0, 0, 0)
         items = list(value.items())
