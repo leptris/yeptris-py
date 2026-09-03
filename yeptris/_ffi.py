@@ -166,8 +166,10 @@ _lib.yeptris_document_build.restype = ctypes.c_int
 BUILD_ENTRY = struct.Struct("<BBHII")
 BUILD_SCALAR, BUILD_SEQ, BUILD_MAP, BUILD_END = 1, 2, 3, 4
 
+# restype c_void_p: the malloc'd buffer's pointer must stay a pointer
+# so it can be freed (c_char_p would auto-convert and leak it)
 _lib.yeptris_serialize.argtypes = [_p, ctypes.POINTER(_sz)]
-_lib.yeptris_serialize.restype = ctypes.c_char_p
+_lib.yeptris_serialize.restype = ctypes.c_void_p
 
 # serialize() returns a malloc'd buffer (caller frees, emit.h) — the
 # library allocates with the system allocator, so libc free is exact
@@ -186,6 +188,16 @@ def last_error():
 def free_buffer(buf) -> None:
     if buf:
         libc_free(ctypes.cast(buf, ctypes.c_void_p))
+
+
+def read_owned(ptr, length) -> bytes:
+    """The serialize* contract: caller copies then frees."""
+    if not ptr:
+        return b""
+    try:
+        return ctypes.string_at(ptr, length)
+    finally:
+        free_buffer(ptr)
 
 
 def drain(yaml: bytes, schema: int):
