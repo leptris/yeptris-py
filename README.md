@@ -49,8 +49,16 @@ records — the FFI tax is O(1) per document, never per event (the
 same seam yeptris-ruby rides). The 36-byte record layout is
 ABI-pinned in the C header and mirrored in `_ffi.py`.
 
-## Benchmarks
+## Performance
 
 `python3 bench.py` — same-process comparison against PyYAML (pure)
-and CSafeLoader (libyaml). On the dev box: 17-20x PyYAML pure,
-1.9-2.5x CSafeLoader on scalar/block shapes.
+and CSafeLoader/CDumper (libyaml C extensions):
+
+- **load**: 28-39x PyYAML pure, 3.8-6.1x CSafeLoader
+- **dump**: ~1.7x PyYAML pure, ~2x behind CDumper (which walks the
+  tree entirely in C — a no-C-extension design's ceiling is the
+  Python walk itself; the tree raises through ONE
+  `yeptris_document_build` call)
+
+Both directions are O(chunks) in FFI calls: loads drain records in
+two calls, dumps build through one flat entry array.

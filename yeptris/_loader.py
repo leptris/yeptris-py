@@ -118,22 +118,49 @@ def _to_timestamp(text: str):
                         int(g["second"]), micro, tzinfo=tzinfo)
 
 
-def _scalar_value(text: str, tag_id: int, implicit: bool = False):
-    if tag_id == F.TAG_STR and implicit:
-        # the C resolver tags only FULL timestamps (Psych's grammar);
-        # PyYAML's resolver also accepts date-only forms — a plain,
-        # untagged scalar shaped like a date becomes one here. The
-        # dumper quotes strings that would re-shape, so round-trips
-        # hold.
-        ts = _to_timestamp(text)
-        if ts is not None:
-            return ts
+def _value(value: bytes, tag_id: int, flags: int):
+    """A scalar's Python value: byte-level fast paths for the shapes
+    that dominate real documents (int()/float() accept bytes), the
+    full PyYAML-conversion layer for everything else."""
+    if tag_id == F.TAG_STR:
+        text = value.decode("utf-8")
+        if flags & F.EF_IMPLICIT:
+            # the C resolver tags only FULL timestamps (Psych's
+            # grammar); PyYAML also accepts date-only forms — a
+            # plain scalar shaped like a date becomes one here. The
+            # dumper quotes strings that would re-shape.
+            ts = _to_timestamp(text)
+            if ts is not None:
+                return ts
+        return text
+    if tag_id == F.TAG_INT:
+        # digits-only (with optional sign, no leading zero — PyYAML
+        # reads those as octal) is the overwhelming shape
+        body = value[1:] if value[:1] in (b"-", b"+") else value
+        if body.isdigit() and (body[:1] != b"0" or len(body) == 1):
+            return int(value)
+        text = value.decode("utf-8")
+        v = _to_int(text)
+        return text if v is None else v
     if tag_id == F.TAG_NULL:
         return None
+    if tag_id == F.TAG_FLOAT:
+        # the C tag follows the 1.1 grammar; PyYAML additionally
+        # requires the dot — with a dot and no sexagesimal ':' the
+        # C float() is exact
+        if b":" not in value and b"." in value:
+            try:
+                return float(value)
+            except ValueError:
+                pass
+        text = value.decode("utf-8")
+        v = _to_float(text)
+        return text if v is None else v
+    text = value.decode("utf-8")
     if tag_id == F.TAG_BOOL:
         # Psych resolves single-char y/n as bool; PyYAML does not —
-        # the Python binding follows PyYAML (the same override
-        # yeptris-ruby documents for Psych parity)
+        # this binding follows PyYAML (the override yeptris-ruby
+        # documents for Psych parity)
         if len(text) == 1:
             return text
         lowered = text.lower()
@@ -142,12 +169,6 @@ def _scalar_value(text: str, tag_id: int, implicit: bool = False):
         if lowered in _BOOL_FALSE:
             return False
         return text
-    if tag_id == F.TAG_INT:
-        v = _to_int(text)
-        return text if v is None else v
-    if tag_id == F.TAG_FLOAT:
-        v = _to_float(text)
-        return text if v is None else v
     if tag_id == F.TAG_TIMESTAMP:
         v = _to_timestamp(text)
         return text if v is None else v
@@ -177,73 +198,95 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
     anchors: dict = {}
     merge_targets: dict = {}     # id(fresh container) -> dict to merge into
 
-    for off in range(0, len(records), F.RECORD_SIZE):
-        (etype, style, flags, tag_id, _line, _col,
-         v_off, v_len, a_off, a_len, _t_off, _t_len) = _RECORD.unpack_from(records, off)
-        value = arena[v_off:v_off + v_len] if v_len else b""
-        anchor = arena[a_off:a_off + a_len] if a_len else None
-
-        if etype == F.DOCUMENT_START:
-            docs.append(None)
-        elif etype in (F.SEQUENCE_START, F.MAPPING_START):
-            fresh = [] if etype == F.SEQUENCE_START else {}
+    # hot loop: C-level record iteration with the placement logic
+    # inlined (this walk is the bulk of load time; a function call
+    # per event is measurable in CPython)
+    for rec in _RECORD.iter_unpack(records):
+        etype = rec[0]
+        tag_id = rec[3]
+        if etype == F.SCALAR:
+            v_off, v_len = rec[6], rec[7]
+            value = arena[v_off:v_off + v_len] if v_len else b""
+            v = _value(value, tag_id, rec[2])
+            a_len = rec[9]
+            if a_len:
+                anchors[arena[rec[8]:rec[8] + a_len]] = v
             if stack:
-                _place(stack, pending_key, pending_tag, fresh, merge_targets)
+                parent = stack[-1]
+                if type(parent) is list:
+                    parent.append(v)
+                else:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = tag_id
+                    else:
+                        pending_key[-1] = None
+                        if tag_id == F.TAG_MERGE:
+                            if type(v) in (dict, list) and not v:
+                                merge_targets[id(v)] = parent
+                            else:
+                                _merge(parent, v)
+                        else:
+                            parent[key] = v
+            else:
+                docs[-1] = v
+        elif etype == F.MAPPING_START or etype == F.SEQUENCE_START:
+            fresh = {} if etype == F.MAPPING_START else []
+            a_len = rec[9]
+            if a_len:
+                anchors[arena[rec[8]:rec[8] + a_len]] = fresh
+            if stack:
+                parent = stack[-1]
+                if type(parent) is list:
+                    parent.append(fresh)
+                else:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = fresh
+                        pending_tag[-1] = F.TAG_STR
+                    else:
+                        pending_key[-1] = None
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE and not fresh:
+                            merge_targets[id(fresh)] = parent
+                        else:
+                            parent[key] = fresh
             else:
                 docs[-1] = fresh
-            if anchor:
-                anchors[anchor] = fresh
             stack.append(fresh)
             pending_key.append(None)
             pending_tag.append(None)
-        elif etype in (F.SEQUENCE_END, F.MAPPING_END):
+        elif etype == F.MAPPING_END or etype == F.SEQUENCE_END:
             closed = stack.pop()
             pending_key.pop()
             pending_tag.pop()
             target = merge_targets.pop(id(closed), None)
             if target is not None:
                 _merge(target, closed)
-        elif etype == F.SCALAR:
-            text = value.decode("utf-8")
-            v = _scalar_value(text, tag_id, bool(flags & F.EF_IMPLICIT))
-            if anchor:
-                anchors[anchor] = v
-            if stack:
-                _place(stack, pending_key, pending_tag, v, merge_targets, tag_id)
-            else:
-                docs[-1] = v
+        elif etype == F.DOCUMENT_START:
+            docs.append(None)
         elif etype == F.ALIAS:
             # the alias NAME lives in the value field (events.h)
-            v = anchors.get(value)
+            rec_v_len = rec[7]
+            v = anchors.get(arena[rec[6]:rec[6] + rec_v_len] if rec_v_len else b"")
             if stack:
-                _place(stack, pending_key, pending_tag, v, merge_targets, F.TAG_STR)
+                parent = stack[-1]
+                if type(parent) is list:
+                    parent.append(v)
+                else:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = F.TAG_STR
+                    else:
+                        pending_key[-1] = None
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
+                            _merge(parent, v)
+                        else:
+                            parent[key] = v
             else:
                 docs[-1] = v
     return docs
-
-
-def _place(stack, pending_key, pending_tag, value, merge_targets,
-           tag_id=F.TAG_STR) -> None:
-    parent = stack[-1]
-    if isinstance(parent, list):
-        parent.append(value)
-        return
-    key = pending_key[-1]
-    if key is None:
-        pending_key[-1] = value
-        pending_tag[-1] = tag_id
-        return
-    pending_key[-1] = None
-    if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
-        # a resolver-driven merge key; the value may be an inline map
-        # that is still EMPTY (children arrive later) — defer until
-        # the container closes
-        if isinstance(value, (dict, list)) and not value:
-            merge_targets[id(value)] = parent
-        else:
-            _merge(parent, value)
-    else:
-        parent[key] = value
 
 
 def _as_bytes(yaml) -> bytes:
