@@ -27,14 +27,16 @@ _BOOL_WORDS = {"y", "yes", "n", "no", "true", "false", "on", "off"}
 _SAFE_WORD = __import__("re").compile(r"^[A-Za-z][A-Za-z0-9_\-./ ]*$")
 
 
-def _plain_ok(text: str) -> bool:
+def _plain_ok(text: str, _match=_SAFE_WORD.match, _null=_NULL_WORDS, _bools=_BOOL_WORDS) -> bool:
     # fast lane: a letter-started word of safe characters (spaces
     # allowed, no trailing space — it would be eaten on reparse) can
     # be no number, timestamp, or indicator shape; only the reserved
     # words can still reshape, and the set lookups are cheap
-    if _SAFE_WORD.match(text) is not None and not text.endswith(" ") and \
-            text.lower() not in _NULL_WORDS and text.lower() not in _BOOL_WORDS:
-        return True
+    if _match(text) is not None:
+        if text.endswith(" "):
+            return False
+        low = text.lower()
+        return low not in _null and low not in _bools
     if text != text.strip() or not text:
         return False
     if "\n" in text or "\t" in text:
@@ -48,7 +50,8 @@ def _plain_ok(text: str) -> bool:
         return False
     if text == "<<":
         return False
-    if text.lower() in _NULL_WORDS or text.lower() in _BOOL_WORDS:
+    low = text.lower()
+    if low in _NULL_WORDS or low in _BOOL_WORDS:
         return False
     if _to_int(text) is not None or _to_float(text) is not None:
         return False
@@ -113,15 +116,26 @@ def _entries(value, emit, blob, depth, sort_keys):
         emit(F.BUILD_MAP, 0, 0, 0)
         items = list(value.items())
         if sort_keys:
-            try:
-                items.sort(key=lambda kv: (str(type(kv[0])), str(kv[0])))
-            except TypeError:
-                pass
+            if all(type(k) is str for k, _ in items):
+                items.sort()
+            else:
+                try:
+                    items.sort(key=lambda kv: (str(type(kv[0])), str(kv[0])))
+                except TypeError:
+                    pass
         for k, v in items:
             # the host's plain-safety decides keys (a '<<' or
             # resolvable-text key must not re-shape or merge on
-            # reparse — the C table cannot know the reading schema)
-            if not _entries(k, emit, blob, depth + 1, sort_keys):
+            # reparse — the C table cannot know the reading schema).
+            # The str arm is inlined: one frame per key was a measured
+            # fifth of the walk in CPython.
+            if type(k) is str:
+                buf = k.encode("utf-8")
+                emit(F.BUILD_SCALAR,
+                     F.STYLE_PLAIN if _plain_ok(k) else F.STYLE_DOUBLE_QUOTED,
+                     len(blob), len(buf))
+                blob += buf
+            elif not _entries(k, emit, blob, depth + 1, sort_keys):
                 return False
             if not _entries(v, emit, blob, depth + 1, sort_keys):
                 return False
@@ -149,24 +163,32 @@ def dump(value, *, sort_keys: bool = True) -> str:
     PyYAML safe_dump defaults: block style, keys sorted, unicode
     allowed. Raises TypeError for types with no safe form.
     """
-    parts = []
-    pack = F.BUILD_ENTRY.pack
+    pack_into = F.BUILD_ENTRY.pack_into
+    ent_size = F.BUILD_ENTRY.size
+    est = 64
+    ents = bytearray(est * ent_size)
+    cursor = 0
     blob = bytearray()
-    count = 0
 
     def emit(op, style, off, ln):
-        nonlocal count
-        parts.append(pack(op, style, 0, off, ln))
-        count += 1
+        nonlocal cursor, est
+        if cursor >= est:
+            est *= 2
+            new = bytearray(est * ent_size)
+            new[:cursor * ent_size] = ents[:cursor * ent_size]
+            ents[:] = new
+        pack_into(ents, cursor * ent_size, op, style, 0, off, ln)
+        cursor += 1
 
     if not _entries(value, emit, blob, 0, sort_keys):
         raise F.YeptrisError("dump: object nests too deeply")
+    count = cursor
     doc = F._lib.yeptris_document_new()
     if not doc:
         raise F.YeptrisError("document allocation failed")
     try:
         rc = F._lib.yeptris_document_build(
-            doc, b"".join(parts), count, bytes(blob), len(blob)
+            doc, bytes(ents[:count * ent_size]), count, bytes(blob), len(blob)
         )
         if rc != F.OK:
             raise F.YeptrisError(f"document_build failed: {rc}")
