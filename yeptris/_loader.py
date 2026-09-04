@@ -12,6 +12,7 @@ is a literal key).
 from __future__ import annotations
 
 import datetime as _dt
+import struct
 import re
 
 from . import _ffi as F
@@ -187,6 +188,132 @@ def _merge(target: dict, source) -> None:
                     target.setdefault(k, v)
 
 
+# YeptrisValueKind (values.h)
+_V_DOC, _V_NULL, _V_BOOL, _V_INT, _V_FLOAT = 0, 1, 2, 3, 4
+_V_STR, _V_TS, _V_SEQ, _V_MAP, _V_CLOSE, _V_ALIAS, _V_ANCHOR = 5, 6, 7, 8, 9, 10, 11
+
+
+def _cvalue(kind, tag, text: bytes, b: int, pay: int):
+    """A columnar scalar's Python value — the same conversion layer
+    _value applies, entered with the C-pre-converted payload where
+    the fast paths allow it."""
+    if kind == _V_STR:
+        s = text.decode("utf-8")
+        if b == 1:  # implicit-plain: PyYAML's date-only timestamps
+            ts = _to_timestamp(s)
+            if ts is not None:
+                return ts
+        return s
+    if kind == _V_INT:
+        body = text[1:] if text[:1] in (b"-", b"+") else text
+        if body.isdigit() and (body[:1] != b"0" or len(body) == 1):
+            return pay  # the C conversion already ran
+        s = text.decode("utf-8")
+        v = _to_int(s)
+        return s if v is None else v
+    if kind == _V_NULL:
+        return None
+    if kind == _V_FLOAT:
+        if b":" not in text and b"." in text:
+            return struct.unpack("<d", struct.pack("<q", pay))[0]
+        s = text.decode("utf-8")
+        v = _to_float(s)
+        return s if v is None else v
+    s = text.decode("utf-8")
+    if kind == _V_BOOL:
+        if len(s) == 1:
+            return s
+        return True if b == 1 else False
+    if kind == _V_TS:
+        v = _to_timestamp(s)
+        return s if v is None else v
+    return s
+
+
+def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
+    """Every document, via the columnar value stream (libyeptris >
+    0.1.1; feature-detected). The walk is load_all's lockstep twin —
+    same placement semantics, fields from tight columns."""
+    kinds, tags, is_keys, bools, offs, lens, pays, arena, close = F.drain_columns(
+        _as_bytes(yaml), schema)
+    try:
+        docs: list = []
+        stack: list = []
+        pending_key: list = [None]
+        pending_tag: list = [None]
+        anchors: dict = {}
+        merge_targets: dict = {}
+        pending_anchor = None
+
+        def _place(v, tag):
+            if stack:
+                parent = stack[-1]
+                if type(parent) is list:
+                    parent.append(v)
+                else:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = tag
+                    else:
+                        pending_key[-1] = None
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
+                            if type(v) in (dict, list) and not v:
+                                merge_targets[id(v)] = parent
+                            else:
+                                _merge(parent, v)
+                        else:
+                            parent[key] = v
+            else:
+                docs[-1] = v
+
+        for i in range(len(kinds)):
+            kind = kinds[i]
+            if kind == _V_STR:
+                o, l = offs[i], lens[i]
+                text = arena[o:o + l] if l else b""
+                v = _cvalue(kind, tags[i], text, bools[i], 0)
+                if pending_anchor is not None:
+                    anchors[pending_anchor] = v
+                    pending_anchor = None
+                _place(v, tags[i])
+            elif kind == _V_MAP or kind == _V_SEQ:
+                fresh = {} if kind == _V_MAP else []
+                if pending_anchor is not None:
+                    anchors[pending_anchor] = fresh
+                    pending_anchor = None
+                _place(fresh, F.TAG_STR)
+                stack.append(fresh)
+                pending_key.append(None)
+                pending_tag.append(None)
+            elif kind == _V_CLOSE:
+                closed = stack.pop()
+                pending_key.pop()
+                pending_tag.pop()
+                target = merge_targets.pop(id(closed), None)
+                if target is not None:
+                    _merge(target, closed)
+            elif kind == _V_DOC:
+                docs.append(None)
+            elif kind == _V_ALIAS:
+                l = lens[i]
+                v = anchors.get(arena[offs[i]:offs[i] + l] if l else b"")
+                _place(v, F.TAG_STR)
+            elif kind == _V_ANCHOR:
+                pending_anchor = arena[offs[i]:offs[i] + lens[i]]
+            else:
+                o, l = offs[i], lens[i]
+                text = arena[o:o + l] if l else b""
+                v = _cvalue(kind, tags[i], text, bools[i], pays[i])
+                if pending_anchor is not None:
+                    anchors[pending_anchor] = v
+                    pending_anchor = None
+                _place(v, tags[i])
+        return docs
+    finally:
+        close()
+
+
 def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
     """Every document in the stream, in order."""
     records, arena = F.drain(_as_bytes(yaml), schema)
@@ -303,7 +430,13 @@ def _as_bytes(yaml) -> bytes:
     return bytes(data)
 
 
+def _load_all_fast(yaml, schema: int = F.SCHEMA_11_COMPAT):
+    if F.COLUMNS:
+        return load_all_columns(yaml, schema)
+    return load_all(yaml, schema)
+
+
 def load(yaml, schema: int = F.SCHEMA_11_COMPAT):
     """The first document of the stream, or None when empty."""
-    docs = load_all(yaml, schema)
+    docs = _load_all_fast(yaml, schema)
     return docs[0] if docs else None
