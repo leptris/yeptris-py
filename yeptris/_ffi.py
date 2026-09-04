@@ -12,6 +12,7 @@ mirrored here; `_RECORD` unpacks one record in a single call.
 
 from __future__ import annotations
 
+import array
 import ctypes
 import os
 import struct
@@ -200,6 +201,27 @@ def read_owned(ptr, length) -> bytes:
         free_buffer(ptr)
 
 
+class _ValueColumns(ctypes.Structure):
+    """YeptrisValueColumns (values.h): one carved block + the arena."""
+    _fields_ = [("count", ctypes.c_size_t), ("arena_len", ctypes.c_size_t),
+                ("payloads", ctypes.c_void_p), ("offs", ctypes.c_void_p),
+                ("lens", ctypes.c_void_p), ("kinds", ctypes.c_void_p),
+                ("tags", ctypes.c_void_p), ("is_keys", ctypes.c_void_p),
+                ("bools", ctypes.c_void_p), ("arena", ctypes.c_void_p)]
+
+
+# Columnar value drain (libyeptris > 0.1.1): feature-detected; the
+# record drain below is the fallback on older libraries.
+COLUMNS = hasattr(_lib, "yeptris_value_drain_columns")
+if COLUMNS:
+    _lib.yeptris_value_drain_columns.argtypes = [
+        ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int,
+        ctypes.POINTER(_ValueColumns)]
+    _lib.yeptris_value_drain_columns.restype = ctypes.c_int
+    _lib.yeptris_value_free_columns.argtypes = [ctypes.POINTER(_ValueColumns)]
+    _lib.yeptris_value_free_columns.restype = None
+
+
 def drain(yaml: bytes, schema: int):
     """One parse + one bulk read: the flat record array and the arena.
 
@@ -223,3 +245,46 @@ def drain(yaml: bytes, schema: int):
         return records, arena
     finally:
         _lib.yeptris_recorder_free(rec)
+
+
+def drain_columns(yaml: bytes, schema: int):
+    """The value stream as parallel typed columns, one read each.
+
+    Returns (kinds, tags, is_keys, bools, offs, lens, payloads, arena,
+    closer) — bytes for the byte columns, array.array for the wider
+    ones, and a callable that frees the C-side block (call it when the
+    walk has copied out everything it needs; every Python value is
+    arena-slice-copied, so freeing after the walk is always safe).
+    """
+    if not COLUMNS:
+        raise YeptrisError("columnar drain unavailable in this libyeptris")
+    c = _ValueColumns()
+    st = _lib.yeptris_value_drain_columns(yaml, len(yaml), schema, ctypes.byref(c))
+    if st != OK:
+        msg, line, col = last_error()
+        raise ParseError(msg, line, col)
+
+    def _close():
+        _lib.yeptris_value_free_columns(ctypes.byref(c))
+
+    try:
+        n = c.count
+        if n:
+            kinds = ctypes.string_at(c.kinds, n)
+            tags = ctypes.string_at(c.tags, n)
+            is_keys = ctypes.string_at(c.is_keys, n)
+            bools = ctypes.string_at(c.bools, n)
+            offs = array.array("I", ctypes.string_at(c.offs, 4 * n))
+            lens = array.array("I", ctypes.string_at(c.lens, 4 * n))
+            pays = array.array("q", ctypes.string_at(c.payloads, 8 * n))
+        else:
+            kinds = tags = is_keys = bools = b""
+            offs = lens = array.array("I")
+            pays = array.array("q")
+        arena = ctypes.string_at(c.arena, c.arena_len) if c.arena_len else b""
+        cols = (kinds, tags, is_keys, bools, offs, lens, pays, arena, _close)
+        _close = None  # ownership passed to the caller
+        return cols
+    finally:
+        if _close is not None:
+            _close()
