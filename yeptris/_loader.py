@@ -97,6 +97,11 @@ def _to_float(text: str):
 
 
 def _to_timestamp(text: str):
+    # cheap reject first: the regex ran on every implicit-plain scalar
+    # and its cost dominated string-heavy loads — a timestamp is 8..40
+    # chars and always contains '-' (date) or ':' (time)
+    if not (8 <= len(text) <= 40) or not ("-" in text or ":" in text):
+        return None
     m = _TIMESTAMP.match(text)
     if m is None:
         return None
@@ -267,8 +272,32 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
             else:
                 docs[-1] = v
 
-        for i in range(len(kinds)):
+        i = 0
+        n = len(kinds)
+        while i < n:
             kind = kinds[i]
+            if (kind == _V_STR and is_keys[i] and i + 1 < n
+                    and kinds[i + 1] == _V_STR and not is_keys[i + 1]
+                    and pending_anchor is None and stack
+                    and type(stack[-1]) is dict):
+                # the dominant shape: a str:str pair in a map — place
+                # both directly (same conversions as the STR arm)
+                o, l = offs[i], lens[i]
+                key = arena[o:o + l].decode("utf-8")
+                o2, l2 = offs[i + 1], lens[i + 1]
+                val = arena[o2:o2 + l2].decode("utf-8")
+                if key != "<<":
+                    if bools[i] == 1:  # implicit-plain: date reshape, symbol scan
+                        ts = _to_timestamp(key)
+                        if ts is not None:
+                            key = ts
+                    if bools[i + 1] == 1:
+                        ts = _to_timestamp(val)
+                        if ts is not None:
+                            val = ts
+                    stack[-1][key] = val
+                    i += 2
+                    continue
             if kind == _V_STR:
                 o, l = offs[i], lens[i]
                 text = arena[o:o + l] if l else b""
@@ -309,6 +338,7 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                     anchors[pending_anchor] = v
                     pending_anchor = None
                 _place(v, tags[i])
+            i += 1
         return docs
     finally:
         close()
