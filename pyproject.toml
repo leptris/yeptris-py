@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yeptris"
-version = "0.1.5.0"
+version = "0.1.7.0"
 description = "YAML for Python at libleptris speed — an FFI-based (no C extension) binding over libyeptris, PyYAML-compatible"
 readme = "README.md"
 requires-python = ">=3.9"
