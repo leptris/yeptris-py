@@ -12,6 +12,7 @@ is a literal key).
 from __future__ import annotations
 
 import datetime as _dt
+import io
 import struct
 import re
 
@@ -451,10 +452,11 @@ def _as_bytes(yaml) -> bytes:
         return bytes(yaml)
     if isinstance(yaml, str):
         return yaml.encode("utf-8")
-    read = getattr(yaml, "read", None)
-    if read is None:
+    # typed, never attribute-probed: every file-like is an io.IOBase
+    # (file, BytesIO, StringIO's wrapper)
+    if not isinstance(yaml, io.IOBase):
         raise TypeError("expected str, bytes, or a file-like object")
-    data = read()
+    data = yaml.read()
     if isinstance(data, str):
         return data.encode("utf-8")
     return bytes(data)
