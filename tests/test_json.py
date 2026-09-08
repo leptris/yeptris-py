@@ -28,6 +28,10 @@ VALID = [
     'NaN', 'Infinity', '-Infinity', '{"a": [NaN, Infinity]}',
 ]
 
+# unmarked garbage between tokens (the index skip must catch it in
+# the gap validation — TODO.restructure/47's design note)
+GAP_GARBAGE = ['[x1]', '{"a": 1x}', '[ tru e]', '{a:1}', '{"a"::1}', '[1 2]']
+
 INVALID = [
     '{"a":}', '[1,]', '{"a":1}{', 'nul', "'x'", '[1 2]', '{"a" 1}',
     '', '+1', '01', '[,]', '{"a": undefined}', '[tru]', '{"a": 1,}',
@@ -52,7 +56,7 @@ def test_matches_stdlib(name, fn, text):
 
 
 @pytest.mark.parametrize("name,fn", _engines())
-@pytest.mark.parametrize("text", INVALID)
+@pytest.mark.parametrize("text", INVALID + GAP_GARBAGE)
 def test_rejects_like_stdlib(name, fn, text):
     with pytest.raises(ValueError):
         json.loads(text)
