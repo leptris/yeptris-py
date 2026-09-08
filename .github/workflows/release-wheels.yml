@@ -85,7 +85,10 @@ jobs:
             "$RUNNER_TEMP/smokevenv/bin/python" "$GITHUB_WORKSPACE/scripts/wheel_smoke.py"
 
       - name: Attach the wheel to the release
-        run: gh release upload "${GITHUB_REF_NAME}" dist/final/*.whl --clobber
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" dist/final/*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -103,6 +106,9 @@ jobs:
       - name: Build pure artifacts
         run: python3 -m pip install -q build && python3 -m build
       - name: Attach to the release
-        run: gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
