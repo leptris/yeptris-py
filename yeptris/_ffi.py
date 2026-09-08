@@ -145,6 +145,9 @@ _lib.yeptris_last_error.restype = ctypes.c_char_p
 _lib.yeptris_document_new.argtypes = []
 _lib.yeptris_document_new.restype = _p
 _lib.yeptris_document_free.argtypes = [_p]
+_lib.yeptris_parse_json.argtypes = [ctypes.c_char_p, _sz, ctypes.POINTER(ctypes.c_int)]
+_lib.yeptris_parse_json.restype = _p
+
 _lib.yeptris_document_set_root.argtypes = [_p, _p]
 _lib.yeptris_document_set_root.restype = ctypes.c_int
 _lib.yeptris_node_new_scalar.argtypes = [_p, ctypes.c_char_p, _sz, ctypes.c_int]
@@ -184,6 +187,17 @@ def last_error():
     msg = _lib.yeptris_last_error(ctypes.byref(line), ctypes.byref(col))
     return (msg.decode("utf-8", "replace") if msg else "parse error",
             line.value, col.value)
+
+def parse_json_strict(b: bytes) -> None:
+    """The RFC 8259 validator gate: raises ParseError on anything
+    strict JSON rejects (TODO.restructure/41 — the ctypes JSON
+    engine's gate; the native engine validates in its own walk)."""
+    st = ctypes.c_int(0)
+    doc = _lib.yeptris_parse_json(b, len(b), ctypes.byref(st))
+    if st.value != OK or not doc:
+        msg, line, col = last_error()
+        raise ParseError(msg or "invalid JSON", line, col)
+    _lib.yeptris_document_free(doc)
 
 
 def free_buffer(buf) -> None:

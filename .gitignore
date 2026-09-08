@@ -5,3 +5,6 @@ build/
 dist/
 *.egg-info/
 .venv/
+
+# the opt-in native extension (build_ext --inplace artifact)
+yeptris/_native.*.so
