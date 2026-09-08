@@ -62,3 +62,25 @@ and CSafeLoader/CDumper (libyaml C extensions):
 
 Both directions are O(chunks) in FFI calls: loads drain records in
 two calls, dumps build through one flat entry array.
+
+## JSON (strict RFC 8259) — `yeptris.json`
+
+`yeptris.json.loads` is json.loads-compatible (values, rejects,
+types, `json.JSONDecodeError` — including stdlib's default NaN/
+Infinity constant quirk) with two engines behind one contract:
+
+- **native** — the opt-in extension `ext/yeptris_native.c`: a fused
+  scan-kernel descent over libyeptris (the same shape as the Ruby
+  binding's materializer), with a 1024-slot interned-free key cache.
+  Build it with `YEPTRIS_LIB_PATH` + `YEPTRIS_SRC` set
+  (`python3 setup.py build_ext --inplace`); CI builds and gates it.
+- **strict-ffi** — the default pure path: `yeptris_parse_json` is
+  the validator gate, then the columnar value walk converts under
+  JSON rules. No C extension, correct everywhere.
+
+`benchmark/json_profile.py` is the referee (order-alternating
+interleave vs the C scanner): the native engine runs **0.67-0.87x
+json.loads mean (83-85% head-to-head)** on the 144 KB reference
+corpus; shape decomposition: int arrays 0.63x, float arrays 0.77x,
+long strings 0.85x, unique-key maps 0.95x. The previous pure walk
+was ~15x BEHIND — the fused materializer is the entire gap.

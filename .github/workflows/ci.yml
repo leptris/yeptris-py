@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }} (py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,11 +20,18 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      # TODO.restructure/40: the C core rides the NEWEST RELEASE TAG —
+      # the artifact wheels vendor. Green-on-C-main proved nothing
+      # about the tag (the 0.1.13.5 lesson on the Ruby side).
+      - name: Resolve the C core ref
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
       - name: Checkout libyeptris (the C core)
         uses: actions/checkout@v4
         with:
           repository: leptris/yeptris
           path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -34,6 +41,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake ninja
 
+      - name: Install build tooling
+        run: python3 -m pip install -q setuptools
+
       - name: Build shared library
         run: |
           cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
@@ -41,10 +51,19 @@ jobs:
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build
 
+      - name: Build the native JSON materializer (opt-in extension)
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          YEPTRIS_NATIVE_BUILD=1 YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" python3 setup.py build_ext --inplace
+
       - name: Install test dependencies
         run: python3 -m pip install pytest pyyaml
 
-      - name: Run tests
+      - name: Run tests (native engine exercised)
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
@@ -52,3 +71,77 @@ jobs:
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
           fi
           python3 -m pytest -q
+
+  # TODO.restructure/41: the JSON referee — the native engine must
+  # beat json.loads (the C scanner) on both platforms; GATE=1.00
+  # means a mean-ratio loss fails CI. The cache-off row is ungated
+  # evidence (the cache is a measured big net win, item 38).
+  json-profile:
+    name: JSON profile (${{ matrix.os }}${{ matrix.cache == 'off' && ', cache=off' || ', GATE' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.13"
+            cache: "on"
+            gated: true
+          - os: macos-latest
+            python: "3.13"
+            cache: "on"
+            gated: true
+          - os: ubuntu-latest
+            python: "3.13"
+            cache: "off"
+            gated: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Resolve the C core ref
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install build tooling
+        run: python3 -m pip install -q setuptools
+
+      - name: Build shared library and the native engine
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          YEPTRIS_NATIVE_BUILD=1 YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" python3 setup.py build_ext --inplace
+
+      - name: Run the profile
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          export YEPTRIS_NATIVE_CACHE="${{ matrix.cache }}"
+          export GATE="${{ matrix.gated && '1.00' || '' }}"
+          python3 benchmark/json_profile.py 200
