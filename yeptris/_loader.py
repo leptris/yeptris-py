@@ -139,6 +139,9 @@ def _value(value: bytes, tag_id: int, flags: int):
             ts = _to_timestamp(text)
             if ts is not None:
                 return ts
+            big = _maybe_bigint(text)
+            if big is not None:
+                return big
         return text
     if tag_id == F.TAG_INT:
         # digits-only (with optional sign, no leading zero — PyYAML
@@ -195,6 +198,19 @@ def _merge(target: dict, source) -> None:
 
 
 # YeptrisValueKind (values.h)
+# PyYAML's plain-decimal integer shape (resolver.py), beyond-int64
+_PY_INT_SHAPE = re.compile(r"[-+]?[1-9][0-9_]*")
+
+
+def _maybe_bigint(text: str):
+    """Beyond int64 the C resolver leaves the scalar a string; PyYAML
+    materializes arbitrary-precision ints — rebuild under PyYAML's
+    decimal shape (sign, no leading zero, '_' separators; leading
+    zeros are octal to PyYAML and never arrive here as overflow)."""
+    if len(text) > 18 and _PY_INT_SHAPE.fullmatch(text):
+        return int(text.replace("_", ""), 10)
+    return None
+
 _V_DOC, _V_NULL, _V_BOOL, _V_INT, _V_FLOAT = 0, 1, 2, 3, 4
 _V_STR, _V_TS, _V_SEQ, _V_MAP, _V_CLOSE, _V_ALIAS, _V_ANCHOR = 5, 6, 7, 8, 9, 10, 11
 
@@ -209,6 +225,9 @@ def _cvalue(kind, tag, text: bytes, b: int, pay: int):
             ts = _to_timestamp(s)
             if ts is not None:
                 return ts
+            big = _maybe_bigint(s)
+            if big is not None:
+                return big
         return s
     if kind == _V_INT:
         body = text[1:] if text[:1] in (b"-", b"+") else text
@@ -292,10 +311,18 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                         ts = _to_timestamp(key)
                         if ts is not None:
                             key = ts
+                        else:
+                            big = _maybe_bigint(key)
+                            if big is not None:
+                                key = big
                     if bools[i + 1] == 1:
                         ts = _to_timestamp(val)
                         if ts is not None:
                             val = ts
+                        else:
+                            big = _maybe_bigint(val)
+                            if big is not None:
+                                val = big
                     stack[-1][key] = val
                     i += 2
                     continue
