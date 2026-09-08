@@ -76,7 +76,14 @@ def _native_ext(vendor: bool):
         c_ver = _c_version(src_root)
         vdir = Path(__file__).resolve().parent / "yeptris" / "_platform" / f"v{c_ver}"
         vdir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(lib_file, vdir / lib_file.name)
+        # vendor under the REAL soname name (lib_file may be a symlink
+        # to libyeptris.so.0 — the extension's DT_NEEDED is the
+        # soname, and auditwheel checks the wheel tree for it); keep
+        # the plain name too for the ctypes ladder's glob
+        real = lib_file.resolve()
+        shutil.copy2(real, vdir / real.name)
+        if real.name != lib_file.name:
+            shutil.copy2(real, vdir / lib_file.name)
         # the interpreter-independence law (the platform-gem lesson):
         # no absolute rpath, no host-python link — the lib sits inside
         # the package and the extension reaches it relatively
