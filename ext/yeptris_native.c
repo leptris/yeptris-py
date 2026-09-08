@@ -22,9 +22,17 @@
 #define YEP_JP_MAX 1000
 #define YEP_KC 1024
 
+/* Cache slots carry the fill-time key BYTES inline: the probe is
+ * memcmp against the slot copy — no CPython unicode introspection
+ * (PyUnicode_AsUTF8AndSize is 3.10+ stable-ABI; the 3.9 floor rules
+ * it out), no allocation on either path. Keys longer than the copy
+ * are not cache-eligible. */
+#define YEP_KEY_MAX 48
+
 typedef struct {
     uint64_t h;
     uint32_t len;
+    char cp[YEP_KEY_MAX];
     PyObject* key;
 } kcent;
 
@@ -66,13 +74,10 @@ static uint64_t jp_hash(const char* sp, size_t sl) {
 static PyObject* jp_cached(jp* j, const char* sp, size_t sl) {
     uint64_t h = jp_hash(sp, sl);
     kcent* e = &j->kc[(uint32_t)(h & (YEP_KC - 1))];
-    if (e->key != NULL && e->h == h && e->len == (uint32_t)sl) {
-        Py_ssize_t kl = 0;
-        const char* kd = PyUnicode_AsUTF8AndSize(e->key, &kl);
-        if (kd != NULL && (size_t)kl == sl && memcmp(kd, sp, sl) == 0) {
-            Py_INCREF(e->key);
-            return e->key;
-        }
+    if (e->key != NULL && e->h == h && e->len == (uint32_t)sl &&
+        memcmp(e->cp, sp, sl) == 0) {
+        Py_INCREF(e->key);
+        return e->key;
     }
     PyObject* s = PyUnicode_DecodeUTF8(sp, (Py_ssize_t)sl, NULL);
     if (s == NULL) {
@@ -88,6 +93,7 @@ static PyObject* jp_cached(jp* j, const char* sp, size_t sl) {
     Py_XDECREF(e->key);
     e->h = h;
     e->len = (uint32_t)sl;
+    memcpy(e->cp, sp, sl);
     e->key = s; /* the table owns this reference */
     Py_INCREF(s);
     return s;
@@ -119,7 +125,9 @@ static PyObject* jp_str(jp* j, int as_key) {
         sp = j->p + start + 1;
         sl = close - start - 1;
     }
-    if (yep_cache_mode == 0 && (as_key || sl <= 24)) return jp_cached(j, sp, sl);
+    if (yep_cache_mode == 0 && sl <= YEP_KEY_MAX && (as_key || sl <= 24)) {
+        return jp_cached(j, sp, sl);
+    }
     PyObject* s = PyUnicode_DecodeUTF8(sp, (Py_ssize_t)sl, NULL);
     if (s == NULL) {
         PyErr_Clear();
@@ -294,12 +302,17 @@ static PyObject* py_loads(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "O", &obj)) return NULL;
     const char* data;
     Py_ssize_t dlen;
+    PyObject* keepalive = NULL;
     if (PyUnicode_Check(obj)) {
-        data = PyUnicode_AsUTF8AndSize(obj, &dlen);
-        if (data == NULL) return NULL;
+        /* limited-API safe: PyUnicode_AsUTF8AndSize is 3.10+ stable */
+        keepalive = PyUnicode_AsUTF8String(obj);
+        if (keepalive == NULL) return NULL;
+        data = PyBytes_AsString(keepalive);
+        dlen = PyBytes_Size(keepalive);
     } else if (PyBytes_Check(obj)) {
-        data = PyBytes_AS_STRING(obj);
-        dlen = PyBytes_GET_SIZE(obj);
+        data = PyBytes_AsString(obj); /* limited-API safe (abi3 wheels) */
+        dlen = PyBytes_Size(obj);
+        if (data == NULL) return NULL;
     } else {
         PyErr_SetString(PyExc_TypeError, "loads() expects str or bytes");
         return NULL;
@@ -310,6 +323,7 @@ static PyObject* py_loads(PyObject* self, PyObject* args) {
     j.len = (size_t)dlen;
     j.i = 0;
     PyObject* v = jp_value(&j);
+    Py_XDECREF(keepalive); /* the parse never retains the input buffer */
     if (v != NULL) {
         jp_ws(&j);
         if (j.i != (size_t)dlen) {

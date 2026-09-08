@@ -84,3 +84,16 @@ json.loads mean (83-85% head-to-head)** on the 144 KB reference
 corpus; shape decomposition: int arrays 0.63x, float arrays 0.77x,
 long strings 0.85x, unique-key maps 0.95x. The previous pure walk
 was ~15x BEHIND — the fused materializer is the entire gap.
+
+## Installing the native JSON engine (platform wheels)
+
+`pip install yeptris` on macOS (arm64) and manylinux (x86_64)
+installs **platform wheels** that vendor libyeptris and the native
+JSON materializer (abi3 — one wheel per platform serves CPython
+3.9+): zero compiler, zero env vars, `yeptris.json.engine()` is
+`native` out of the box. Every wheel is release-smoked in a clean
+venv before publish. Other platforms install the pure package (the
+strict-ffi JSON engine + YAML via libyeptris through the
+`YEPTRIS_LIB_PATH` ladder); building the extension from source is
+`YEPTRIS_LIB_PATH=... YEPTRIS_SRC=... python3 setup.py build_ext
+--inplace`.

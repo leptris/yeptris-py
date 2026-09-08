@@ -1,0 +1,108 @@
+name: Release wheels
+
+# TODO.restructure/42: platform wheels vendoring libyeptris + the
+# native JSON engine (abi3 — one wheel per platform, CPython 3.9+).
+# Fires on the binding's lockstep tags (v{c-semver}.{patch}); builds
+# the C core at the matching C TAG, vendors the shared library into
+# yeptris/_platform/<v>/ with a relative rpath, repairs (manylinux)
+# or re-tags (macOS floor 11.0), and SMOKES the installed wheel in a
+# clean venv before it is attached to the release. PyPI upload rides
+# twine from a maintainer machine until trusted publishing is
+# configured for this repo (same credentials story as the hand-built
+# releases).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wheel:
+    name: Wheel on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the lockstep C tag
+        run: echo "YEP_C_TAG=v$(python3 -c "import re,sys; t=open('pyproject.toml').read(); v=re.search(r'^version = \"(\d+\.\d+)', t, re.M).group(1); print(v)")" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core, at the tag)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.YEP_C_TAG }}
+
+      - name: Install build tooling
+        run: |
+          python3 -m pip install -q setuptools wheel build auditwheel
+          if [ "$(uname -s)" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null; else brew install cmake ninja; fi
+
+      - name: Build the C shared library
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+
+      - name: Build the vendored abi3 wheel
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+          else
+            LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          YEPTRIS_VENDOR=1 YEPTRIS_LIB_PATH="$LIB" \
+            YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" \
+            python3 setup.py bdist_wheel --py-limited-api=cp39
+
+      - name: Finalize (macOS floor tag / manylinux repair)
+        run: |
+          mkdir -p dist/final
+          if [ "$(uname -s)" = "Darwin" ]; then
+            python3 -m wheel tags --platform-tag macosx_11_0_arm64 --remove dist/*.whl
+            mv dist/*.whl dist/final/
+          else
+            auditwheel repair dist/*.whl -w dist/final
+          fi
+
+      - name: Smoke the installed wheel (clean venv, no env)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/smokevenv"
+          "$RUNNER_TEMP/smokevenv/bin/pip" install -q dist/final/*.whl
+          cd "$RUNNER_TEMP"
+          env -u YEPTRIS_LIB_PATH -u YEPTRIS_SRC \
+            "$RUNNER_TEMP/smokevenv/bin/python" "$GITHUB_WORKSPACE/scripts/wheel_smoke.py"
+
+      - name: Attach the wheel to the release
+        run: gh release upload "${GITHUB_REF_NAME}" dist/final/*.whl --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # The pure artifacts: the sdist (ext/ + setup.py ride it; builds
+  # native only when the env is set) and the pure wheel — the
+  # fallback every non-covered platform installs.
+  pure:
+    name: Pure sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build pure artifacts
+        run: python3 -m pip install -q build && python3 -m build
+      - name: Attach to the release
+        run: gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

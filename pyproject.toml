@@ -33,7 +33,7 @@ test = ["pytest", "pyyaml"]
 
 [tool.setuptools]
 packages = ["yeptris"]
-package-data = { yeptris = ["py.typed"] }
+package-data = { yeptris = ["py.typed", "_platform/*/*"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
