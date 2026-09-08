@@ -32,15 +32,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve the lockstep C tag
-        run: echo "YEP_C_TAG=v$(python3 -c "import re,sys; t=open('pyproject.toml').read(); v=re.search(r'^version = \"(\d+\.\d+)', t, re.M).group(1); print(v)")" >> "$GITHUB_ENV"
+      - name: Resolve the lockstep coordinates
+        run: scripts/resolve-version.sh >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core, at the tag)
         uses: actions/checkout@v4
         with:
           repository: leptris/yeptris
           path: libyeptris-src
-          ref: ${{ env.YEP_C_TAG }}
+          ref: ${{ env.C_TAG }}
 
       - name: Install build tooling
         run: |
@@ -86,9 +86,9 @@ jobs:
 
       - name: Attach the wheel to the release
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
-          gh release upload "${GITHUB_REF_NAME}" dist/final/*.whl --clobber
+          gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
+          gh release upload "${{ env.PKG_TAG }}" dist/final/*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -107,8 +107,8 @@ jobs:
         run: python3 -m pip install -q build && python3 -m build
       - name: Attach to the release
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
-          gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
+          gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
+          gh release upload "${{ env.PKG_TAG }}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
