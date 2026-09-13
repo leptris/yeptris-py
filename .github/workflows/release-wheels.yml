@@ -21,14 +21,20 @@ permissions:
 
 jobs:
   wheel:
-    name: Wheel on ${{ matrix.os }}
+    name: Wheel on ${{ matrix.os }}${{ matrix.arch && format(' ({0})', matrix.arch) || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
+          # Intel macs: GitHub retired the free x86_64 runners — the
+          # Apple toolchain cross-builds on the arm leg instead
+          # (the smoke step can't load a cross dylib, so it is skipped)
+          - os: macos-latest
+            arch: x86_64
           - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,7 +58,12 @@ jobs:
 
       - name: Build the C shared library
         run: |
+          ARCH_FLAGS=""
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            ARCH_FLAGS="-DCMAKE_OSX_ARCHITECTURES=x86_64"
+          fi
           cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            $ARCH_FLAGS \
             -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build
@@ -73,13 +84,18 @@ jobs:
         run: |
           mkdir -p dist/final
           if [ "$(uname -s)" = "Darwin" ]; then
-            python3 -m wheel tags --platform-tag macosx_11_0_arm64 --remove dist/*.whl
+            TAG="macosx_11_0_arm64"
+            if [ "${{ matrix.arch }}" = "x86_64" ]; then
+              TAG="macosx_11_0_x86_64"
+            fi
+            python3 -m wheel tags --platform-tag "$TAG" --remove dist/*.whl
             mv dist/*.whl dist/final/
           else
             auditwheel repair dist/*.whl -w dist/final
           fi
 
       - name: Smoke the installed wheel (clean venv, no env)
+        if: matrix.arch != 'x86_64'
         run: |
           python3 -m venv "$RUNNER_TEMP/smokevenv"
           "$RUNNER_TEMP/smokevenv/bin/pip" install -q dist/final/*.whl

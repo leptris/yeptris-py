@@ -100,7 +100,7 @@ def _candidate_paths():
     here = Path(__file__).resolve().parent
     for p in sorted(here.glob("_platform/*/libyeptris.*")):
         yield p
-    names = ["libyeptris.dylib", "libyeptris.so"]
+    names = ["libyeptris.dylib", "libyeptris.so", "libyeptris.dll"]
     for build in ("build", "build-validate"):
         for name in names:
             yield here.parent.parent / "yeptris" / build / "src" / name
