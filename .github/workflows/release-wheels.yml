@@ -24,6 +24,7 @@ jobs:
   wheel:
     name: Wheel on ${{ matrix.os }}${{ matrix.arch && format(' ({0})', matrix.arch) || '' }}
     runs-on: ${{ matrix.os }}
+    environment: pypi # the Trusted Publisher's expected environment claim
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +125,7 @@ jobs:
   pure:
     name: Pure sdist + wheel
     runs-on: ubuntu-latest
+    environment: pypi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
