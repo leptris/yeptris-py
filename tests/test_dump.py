@@ -105,3 +105,21 @@ def test_roundtrip_against_pyyaml_random_documents():
         text = pyml.safe_dump(doc)
         assert pyml.safe_load(text) == doc
         assert pyyaml.safe_load(text) == doc
+
+
+# Issue #52 regression: load() must return plain string keys (no colon
+# prefix), and dump(load(x)) must round-trip every plain mapping key —
+# the historical defect returned {':config': ...} and dump raised
+# ValueError ("could not convert string to float: 'config'").
+def test_issue52_colon_keys_and_roundtrip():
+    src = b"config:\n  database:\n    host: localhost\n"
+    r = pyml.load(src)
+    assert r == {"config": {"database": {"host": "localhost"}}}
+    assert all(not str(k).startswith(":") for k in r)
+    assert pyml.load(pyml.dump(r)) == r
+
+
+def test_issue52_numeric_looking_keys_roundtrip():
+    for src in (b"5014: x\n", b"1.5: y\n", b"\"5014\": quoted\n"):
+        r = pyml.load(src)
+        assert pyml.load(pyml.dump(r)) == r
