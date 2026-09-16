@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # OIDC for PyPI Trusted Publisher
 
 jobs:
   wheel:
@@ -111,6 +112,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Publish to PyPI (Trusted Publisher)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/final
+          skip-existing: true
+
   # The pure artifacts: the sdist (ext/ + setup.py ride it; builds
   # native only when the env is set) and the pure wheel — the
   # fallback every non-covered platform installs.
@@ -133,3 +140,10 @@ jobs:
           gh release upload "${{ env.PKG_TAG }}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Publish to PyPI (Trusted Publisher)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+
