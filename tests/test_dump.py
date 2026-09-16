@@ -123,3 +123,27 @@ def test_issue52_numeric_looking_keys_roundtrip():
     for src in (b"5014: x\n", b"1.5: y\n", b"\"5014\": quoted\n"):
         r = pyml.load(src)
         assert pyml.load(pyml.dump(r)) == r
+
+
+def test_colon_bearing_strings_dump_without_crash():
+    # issue #52's remaining face: any ':'-containing VALUE (or key)
+    # reached _to_float's sexagesimal arm and raised ValueError out
+    # of safe_dump — PyYAML's resolver regex gates the shape first
+    doc = pyml.safe_load(pyml.safe_dump({
+        "sym": ":a", "url": "https://example.com/x", "mixed": "12:34abc",
+        "time": "12:34:56", "sexafloat": "1:30.5", "a:b": "v", ":k": 1,
+    }))
+    assert doc["sym"] == ":a"
+    assert doc["url"] == "https://example.com/x"
+    assert doc["mixed"] == "12:34abc"
+    assert doc["time"] == "12:34:56"
+    assert doc["sexafloat"] == "1:30.5"
+    assert doc["a:b"] == "v"
+    assert doc[":k"] == 1
+
+
+def test_colon_bearing_strings_pyyaml_roundtrip():
+    # the same documents through the reference implementation
+    h = {"sym": ":a", "url": "https://example.com/x", "mixed": "12:34abc"}
+    text = pyml.safe_dump(h)
+    assert pyyaml.safe_load(text) == h

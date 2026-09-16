@@ -74,7 +74,10 @@ def _to_int(text: str):
 
 
 def _to_float(text: str):
-    """PyYAML's construct_yaml_float, faithfully."""
+    """PyYAML's construct_yaml_float, faithfully: the resolver regex
+    gates every shape — text that merely contains ':' (':a',
+    'http://x') is a String and must never reach the sexagesimal
+    math (issue #52: float('a') ValueError out of safe_dump)."""
     t = text.replace("_", "").lower()
     sign = -1 if t[0] == "-" else 1
     if t[0] in "+-":
@@ -83,16 +86,16 @@ def _to_float(text: str):
         return sign * float("inf")
     if t == ".nan":
         return float("nan")
-    if ":" in t:
-        # reversed digits, base 1, *= 60 — the fraction part rides
-        # its segment as a float
-        value = 0.0
-        base = 1.0
-        for part in reversed(t.split(":")):
-            value += float(part) * base
-            base *= 60
-        return sign * value
     if _FLOAT.match(text):
+        if ":" in t:
+            # reversed digits, base 1, *= 60 — the fraction part rides
+            # its segment as a float
+            value = 0.0
+            base = 1.0
+            for part in reversed(t.split(":")):
+                value += float(part) * base
+                base *= 60
+            return sign * value
         return sign * float(t)
     return None
 
