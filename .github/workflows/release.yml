@@ -59,9 +59,10 @@ jobs:
           ref: ${{ env.C_TAG }}
 
       - name: Install build tooling
+        shell: bash
         run: |
           python3 -m pip install -q setuptools wheel build auditwheel
-          if [ "$(uname -s)" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null; else brew install cmake ninja; fi
+          if [ "$(uname -s)" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null; elif [ "$(uname -s)" = "Darwin" ]; then brew install cmake ninja; fi
 
       - name: Build the C shared library
         shell: bash
@@ -120,6 +121,7 @@ jobs:
 
       - name: Smoke the installed wheel (clean venv, no env)
         if: matrix.arch != 'x86_64'
+        shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/smokevenv"
           "$RUNNER_TEMP/smokevenv/bin/pip" install -q dist/final/*.whl
@@ -128,6 +130,7 @@ jobs:
             "$RUNNER_TEMP/smokevenv/bin/python" "$GITHUB_WORKSPACE/scripts/wheel_smoke.py"
 
       - name: Attach the wheel to the release
+        shell: bash
         run: |
           gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
             gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
@@ -152,6 +155,7 @@ jobs:
       - name: Build pure artifacts
         run: python3 -m pip install -q build && python3 -m build
       - name: Attach to the release
+        shell: bash
         run: |
           gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
             gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
