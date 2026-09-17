@@ -100,6 +100,12 @@ jobs:
             YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" \
             python3 setup.py bdist_wheel --py-limited-api=cp39
 
+      - name: Diagnose the wheel contents (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ls -la yeptris/_platform/*/ 2>&1 || true
+          python3 -m zipfile -l dist/*.whl | grep -i -E "platform|dll" || echo "NO DLL IN WHEEL"
       - name: Finalize (macOS floor tag / manylinux repair / Windows retag)
         shell: bash
         run: |
