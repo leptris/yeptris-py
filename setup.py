@@ -111,7 +111,8 @@ def _native_ext(vendor: bool):
         # Windows platform wheels ride the ctypes ladder alone: the
         # native accelerator needs a mingw/MSVC import-lib dance the
         # pure-python surface does not; feature detection skips it
-        return []
+        # (None, not []: setup()'s [ext] wrapping must see a scalar)
+        return None
 
     return Extension(
         "yeptris._native",
