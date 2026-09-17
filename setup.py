@@ -48,8 +48,10 @@ def _lib_dirs():
 
 
 def _lib_file():
-    return next((d / n for d in _lib_dirs() for n in ("libyeptris.dylib", "libyeptris.so")
-                 if (d / n).exists()), None)
+    # the MSVC build names the DLL yeptris.dll (and stages under
+    # bin/Release); both spellings are probed wherever they may sit
+    names = ("libyeptris.dylib", "libyeptris.so", "yeptris.dll", "libyeptris.dll")
+    return next((d / n for d in _lib_dirs() for n in names if (d / n).exists()), None)
 
 
 def _c_version(src_root: Path) -> str:
