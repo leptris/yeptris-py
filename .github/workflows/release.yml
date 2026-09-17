@@ -27,8 +27,9 @@ jobs:
     # Windows: the DLL rides the wheel (staging + packaging fixed) but
     # the clean-venv ctypes LoadLibrary still TypeErrors on the runner
     # — needs hands-on Windows debugging; non-blocking until then so
-    # the platform matrix ships
-    continue-on-error: ${{ runner.os == 'Windows' }}
+    # the platform matrix ships. matrix context only at job level —
+    # runner is a step context (the startup-failure lesson)
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
