@@ -131,6 +131,7 @@ if os.environ.get("YEPTRIS_NATIVE_BUILD", "") == "1" and ext is None:
              "(set YEPTRIS_LIB_PATH and YEPTRIS_SRC)")
 
 setup(
+    packages=["yeptris"],  # explicit: auto-discovery can drop package_data
     ext_modules=[ext] if ext is not None else [],
     # the vendored C library rides the wheel on platforms auditwheel
     # does not repair (Windows: nothing else pulls the DLL in — the
