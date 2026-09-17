@@ -36,6 +36,12 @@ jobs:
             arch: x86_64
           - os: ubuntu-latest
           - os: ubuntu-24.04-arm
+          # Windows (the leptris-py legs): the ctypes ladder vendors
+          # yeptris.dll, and the native abi3 accelerator is optional —
+          # a pure wheel + the vendored DLL carries full native parse
+          # speed; the wheel retags win_amd64. win_arm64 rides the
+          # follow-up (cross toolchain), like leptris-py's.
+          - os: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,22 +64,34 @@ jobs:
           if [ "$(uname -s)" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null; else brew install cmake ninja; fi
 
       - name: Build the C shared library
+        shell: bash
         run: |
           ARCH_FLAGS=""
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             ARCH_FLAGS="-DCMAKE_OSX_ARCHITECTURES=x86_64"
           fi
-          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
-            $ARCH_FLAGS \
-            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
-            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
-          cmake --build libyeptris-src/build
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -B libyeptris-src/build -S libyeptris-src \
+              -DYEPTRIS_BUILD_TESTING=OFF \
+              -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+            cmake --build libyeptris-src/build --config Release
+          else
+            cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+              $ARCH_FLAGS \
+              -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+              -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+            cmake --build libyeptris-src/build
+          fi
 
       - name: Build the vendored abi3 wheel
+        shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
             export MACOSX_DEPLOYMENT_TARGET=11.0
+          elif [ "$(uname -s)" = "MINGW"* ] || [ "$RUNNER_OS" = "Windows" ]; then
+            LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/Release/yeptris.dll"
+            test -f "$LIB" || LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/yeptris.dll"
           else
             LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
           fi
@@ -81,10 +99,15 @@ jobs:
             YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" \
             python3 setup.py bdist_wheel --py-limited-api=cp39
 
-      - name: Finalize (macOS floor tag / manylinux repair)
+      - name: Finalize (macOS floor tag / manylinux repair / Windows retag)
+        shell: bash
         run: |
           mkdir -p dist/final
-          if [ "$(uname -s)" = "Darwin" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python3 -m pip install -q wheel
+            python3 -m wheel tags --platform-tag win_amd64 --remove dist/*.whl
+            mv dist/*.whl dist/final/
+          elif [ "$(uname -s)" = "Darwin" ]; then
             TAG="macosx_11_0_arm64"
             if [ "${{ matrix.arch }}" = "x86_64" ]; then
               TAG="macosx_11_0_x86_64"

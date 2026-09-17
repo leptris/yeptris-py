@@ -84,6 +84,10 @@ def _native_ext(vendor: bool):
         shutil.copy2(real, vdir / real.name)
         if real.name != lib_file.name:
             shutil.copy2(real, vdir / lib_file.name)
+        # Windows: MSVC names the DLL yeptris.dll; the ctypes ladder
+        # globs libyeptris.* — vendor under both names
+        if real.name == "yeptris.dll":
+            shutil.copy2(real, vdir / "libyeptris.dll")
         # the interpreter-independence law (the platform-gem lesson):
         # no absolute rpath, no host-python link — the lib sits inside
         # the package and the extension reaches it relatively
@@ -100,6 +104,12 @@ def _native_ext(vendor: bool):
         else:
             link = {"runtime_library_dirs": [lib_dir]}
         lib_name = "yeptris"
+
+    if sys.platform == "win32" and vendor:
+        # Windows platform wheels ride the ctypes ladder alone: the
+        # native accelerator needs a mingw/MSVC import-lib dance the
+        # pure-python surface does not; feature detection skips it
+        return []
 
     return Extension(
         "yeptris._native",
