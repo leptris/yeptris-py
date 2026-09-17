@@ -91,7 +91,9 @@ jobs:
             LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
             export MACOSX_DEPLOYMENT_TARGET=11.0
           elif [ "$(uname -s)" = "MINGW"* ] || [ "$RUNNER_OS" = "Windows" ]; then
-            LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/Release/yeptris.dll"
+            # the VS generator stages the DLL under bin/Release
+            LIB="$GITHUB_WORKSPACE/libyeptris-src/build/bin/Release/yeptris.dll"
+            test -f "$LIB" || LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/Release/yeptris.dll"
             test -f "$LIB" || LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/yeptris.dll"
           else
             LIB="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
