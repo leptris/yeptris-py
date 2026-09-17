@@ -130,4 +130,11 @@ if os.environ.get("YEPTRIS_NATIVE_BUILD", "") == "1" and ext is None:
     sys.exit("YEPTRIS_NATIVE_BUILD=1 but libyeptris was not found "
              "(set YEPTRIS_LIB_PATH and YEPTRIS_SRC)")
 
-setup(ext_modules=[ext] if ext is not None else [])
+setup(
+    ext_modules=[ext] if ext is not None else [],
+    # the vendored C library rides the wheel on platforms auditwheel
+    # does not repair (Windows: nothing else pulls the DLL in — the
+    # ctypes ladder globs these paths)
+    package_data={"yeptris": ["_platform/*/*.dll", "_platform/*/*.so",
+                              "_platform/*/*.so.*", "_platform/*/*.dylib"]},
+)
