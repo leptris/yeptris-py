@@ -124,10 +124,13 @@ jobs:
         shell: bash
         run: |
           python3 -m venv "$RUNNER_TEMP/smokevenv"
-          "$RUNNER_TEMP/smokevenv/bin/pip" install -q dist/final/*.whl
+          # Windows venvs stage under Scripts/, not bin/
+          VB="$RUNNER_TEMP/smokevenv/bin"
+          [ -d "$VB" ] || VB="$RUNNER_TEMP/smokevenv/Scripts"
+          "$VB/pip" install -q dist/final/*.whl
           cd "$RUNNER_TEMP"
           env -u YEPTRIS_LIB_PATH -u YEPTRIS_SRC \
-            "$RUNNER_TEMP/smokevenv/bin/python" "$GITHUB_WORKSPACE/scripts/wheel_smoke.py"
+            "$VB/python" "$GITHUB_WORKSPACE/scripts/wheel_smoke.py"
 
       - name: Attach the wheel to the release
         shell: bash
