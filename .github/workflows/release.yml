@@ -206,6 +206,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Stage the checkout for the container
+        shell: bash
+        run: |
+          # the container's /work mount is RUNNER_TEMP — the wheel build
+          # consumes the staged tree (the workspace itself is not mounted)
+          mkdir -p "$RUNNER_TEMP/yeptris-py"
+          tar --exclude=.git --exclude=dist --exclude=build -cf - . | tar -xf - -C "$RUNNER_TEMP/yeptris-py"
+          test -f "$RUNNER_TEMP/yeptris-py/pyproject.toml"
+
       - name: Build + smoke the musllinux wheel (Alpine container)
         shell: bash
         run: |

@@ -127,18 +127,18 @@ def _native_ext(vendor: bool):
             link = {"runtime_library_dirs": [lib_dir]}
         lib_name = "yeptris"
 
-    if sys.platform == "win32" and vendor:
-        # Windows platform wheels ride the ctypes ladder alone: the
-        # native accelerator needs a mingw/MSVC import-lib dance the
-        # pure-python surface does not; feature detection skips it
-        # (None, not []: setup()'s [ext] wrapping must see a scalar)
-        return None
+    # win32 links the IMPORT library (found beside the C build tree);
+    # POSIX links the SONAME directly out of the vendored/lib dir
+    if sys.platform == "win32":
+        link_dirs = [str(d) for d in _implib_dirs(lib_file)]
+    else:
+        link_dirs = [lib_dir]
 
     return Extension(
         "yeptris._native",
         ["ext/yeptris_native.c"],
         include_dirs=include_dirs,
-        library_dirs=[str(d) for d in _implib_dirs(lib_file)],
+        library_dirs=link_dirs,
         libraries=[lib_name],
         extra_compile_args=["-O3"],
         define_macros=[("Py_LIMITED_API", "0x03090000")],
