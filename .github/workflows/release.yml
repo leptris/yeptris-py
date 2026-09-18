@@ -175,8 +175,20 @@ jobs:
       - name: Resolve the lockstep coordinates
         shell: bash
         run: scripts/resolve-version.sh >> "$GITHUB_ENV"
+      - name: Checkout libyeptris (the C core, at the tag)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.C_TAG }}
       - name: Build pure artifacts
-        run: python3 -m pip install -q build && python3 -m build
+        shell: bash
+        run: |
+          # the sdist vendors the C sources so uncovered platforms
+          # compile libyeptris at pip-install time (MANIFEST.in)
+          mkdir -p vendor/libyeptris
+          cp -R libyeptris-src/CMakeLists.txt libyeptris-src/cmake libyeptris-src/src vendor/libyeptris/
+          python3 -m pip install -q build && python3 -m build
       - name: Attach to the release
         shell: bash
         run: |
