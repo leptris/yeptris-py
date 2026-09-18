@@ -176,8 +176,14 @@ _lib.yeptris_serialize.argtypes = [_p, ctypes.POINTER(_sz)]
 _lib.yeptris_serialize.restype = ctypes.c_void_p
 
 # serialize() returns a malloc'd buffer (caller frees, emit.h) — the
-# library allocates with the system allocator, so libc free is exact
-libc_free = ctypes.CDLL(None).free
+# library allocates with the system allocator, so libc free is exact.
+# POSIX: CDLL(None) searches the process symbol table (falls through
+# to libc). Windows has no process fallback — free lives in
+# ucrtbase.dll, the same CRT the MSVC-built DLL allocates from.
+try:
+    libc_free = ctypes.CDLL(None).free
+except (OSError, AttributeError):
+    libc_free = ctypes.CDLL("ucrtbase.dll").free
 libc_free.argtypes = [ctypes.c_void_p]
 
 

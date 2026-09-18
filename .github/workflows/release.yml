@@ -29,7 +29,7 @@ jobs:
     # — needs hands-on Windows debugging; non-blocking until then so
     # the platform matrix ships. matrix context only at job level —
     # runner is a step context (the startup-failure lesson)
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    continue-on-error: ${{ false }}
     strategy:
       fail-fast: false
       matrix:
@@ -45,9 +45,9 @@ jobs:
           # Windows (the leptris-py legs): the ctypes ladder vendors
           # yeptris.dll, and the native abi3 accelerator is optional —
           # a pure wheel + the vendored DLL carries full native parse
-          # speed; the wheel retags win_amd64. win_arm64 rides the
-          # follow-up (cross toolchain), like leptris-py's.
+          # speed; the wheel retags win_amd64 (x64) / win_arm64 (arm).
           - os: windows-latest
+          - os: windows-11-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -120,7 +120,11 @@ jobs:
           mkdir -p dist/final
           if [ "$RUNNER_OS" = "Windows" ]; then
             python3 -m pip install -q wheel
-            python3 -m wheel tags --platform-tag win_amd64 --remove dist/*.whl
+            if [ "$(uname -m)" = "arm64" ] || [ "${{ matrix.os }}" = "windows-11-arm" ]; then
+              python3 -m wheel tags --platform-tag win_arm64 --remove dist/*.whl
+            else
+              python3 -m wheel tags --platform-tag win_amd64 --remove dist/*.whl
+            fi
             mv dist/*.whl dist/final/
           elif [ "$(uname -s)" = "Darwin" ]; then
             TAG="macosx_11_0_arm64"
@@ -183,6 +187,52 @@ jobs:
   # The single PyPI upload (Linux-only: the publish action cannot run
   # on macOS runners). All wheels + the sdist are downloaded from the
   # GitHub release so every platform artifact ships in one upload.
+  # musllinux wheels (Alpine): the whole leg rides docker run — JS
+  # actions cannot run inside Alpine. The wheel retags to
+  # musllinux_1_2_<arch> (the abi3 wheel is arch-portable within the
+  # tag); smoke installs + imports inside the same image.
+  wheel-musl:
+    name: musllinux wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build + smoke the musllinux wheel (Alpine container)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          docker run --rm -v "$RUNNER_TEMP:/work" -w /work python:3.12-alpine sh -c '
+            set -eux
+            apk add --no-cache build-base bash cmake ninja git
+            git config --global --add safe.directory /work
+            git clone --quiet --depth 1 https://github.com/leptris/yeptris /work/yeptris-c
+            cmake -B /work/yeptris-c/build -S /work/yeptris-c -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+              -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+            cmake --build /work/yeptris-c/build
+            mkdir -p /work/yeptris-py/yeptris/_platform/musl
+            cp /work/yeptris-c/build/src/libyeptris.so /work/yeptris-py/yeptris/_platform/musl/
+            cd /work/yeptris-py
+            python -m pip install -q wheel build
+            python -m build --wheel
+            python -m wheel tags --platform-tag musllinux_1_2_${{ matrix.arch }} --remove dist/*.whl
+            python -m venv /work/venv
+            /work/venv/bin/pip install -q --no-index dist/*.whl
+            /work/venv/bin/python -c "import yeptris; assert yeptris.load('a: [1, 2]') == {'a': [1, 2]}; print('MUSL SMOKE PASS')"
+          ' || exit 1
+          cp "$RUNNER_TEMP/yeptris-py/dist"/*.whl "$RUNNER_TEMP/dist/" 2>/dev/null || true
+          ls -la "$RUNNER_TEMP/dist" | head -5
+
+
   publish:
     name: Publish to PyPI (Trusted Publisher)
     runs-on: ubuntu-latest
