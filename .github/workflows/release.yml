@@ -185,10 +185,13 @@ jobs:
         shell: bash
         run: |
           # the sdist vendors the C sources so uncovered platforms
-          # compile libyeptris at pip-install time (MANIFEST.in)
+          # compile libyeptris at pip-install time (MANIFEST.in);
+          # YEPTRIS_PURE keeps this leg's WHEEL pure (the fallback
+          # artifact) while the sdist carries the sources
           mkdir -p vendor/libyeptris
           cp -R libyeptris-src/CMakeLists.txt libyeptris-src/cmake libyeptris-src/src vendor/libyeptris/
-          python3 -m pip install -q build && python3 -m build
+          python3 -m pip install -q build
+          YEPTRIS_PURE=1 python3 -m build
       - name: Attach to the release
         shell: bash
         run: |

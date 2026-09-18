@@ -80,7 +80,11 @@ def _c_version(src_root: Path) -> str:
 def _build_vendored():
     # libyeptris rides EVERY artifact: when no prebuilt lib matches
     # (pip fell back to the sdist on an uncovered platform), build
-    # the vendored C sources into the package's _platform tree
+    # the vendored C sources into the package's _platform tree.
+    # YEPTRIS_PURE=1 keeps the pure py3-none-any wheel pure (the
+    # release's fallback artifact; the sdist still carries the sources)
+    if os.environ.get("YEPTRIS_PURE", "") == "1":
+        return None
     here = Path(__file__).resolve().parent
     vendored = next(
         (p for p in (here / "vendor" / "libyeptris", here.parent / "yeptris") if (p / "CMakeLists.txt").is_file()),
