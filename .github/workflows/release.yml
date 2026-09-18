@@ -233,7 +233,7 @@ jobs:
             mkdir -p /work/yeptris-py/yeptris/_platform/musl
             cp /work/yeptris-c/build/src/libyeptris.so /work/yeptris-py/yeptris/_platform/musl/
             cd /work/yeptris-py
-            python -m pip install -q wheel build
+            python -m pip install -q setuptools wheel build
             # vendor: the wheel must carry the musl lib + native ext
             # (a pure py3-none-any wheel fails the smoke)
             YEPTRIS_VENDOR=1 YEPTRIS_LIB_PATH=/work/yeptris-c/build/src/libyeptris.so \
