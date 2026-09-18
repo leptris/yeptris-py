@@ -96,6 +96,10 @@ def _native_ext(vendor: bool):
         rel = f"_platform/v{c_ver}"
         if sys.platform == "darwin":
             link = {"extra_link_args": [f"-Wl,-rpath,@loader_path/{rel}"]}
+        elif sys.platform == "win32":
+            # distutils: "don't know how to set runtime library search
+            # path for MSVC" — the loader finds the DLL on PATH
+            link = {}
         else:
             link = {"runtime_library_dirs": [f"$ORIGIN/{rel}"]}
         lib_dir, lib_name = str(vdir), "yeptris"
@@ -103,6 +107,8 @@ def _native_ext(vendor: bool):
         lib_dir = str(lib_file.parent)
         if sys.platform == "darwin":
             link = {"extra_link_args": [f"-Wl,-rpath,{lib_dir}"]}
+        elif sys.platform == "win32":
+            link = {}
         else:
             link = {"runtime_library_dirs": [lib_dir]}
         lib_name = "yeptris"

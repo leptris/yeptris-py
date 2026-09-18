@@ -104,6 +104,8 @@ jobs:
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
           else
             export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
+            # the native ext's import of yeptris.dll resolves via PATH
+            export PATH="$(dirname "$YEPTRIS_LIB"):$PATH"
           fi
           python3 -m pytest -q
 
