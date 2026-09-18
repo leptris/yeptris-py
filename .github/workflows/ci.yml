@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test on ${{ matrix.os }} (py${{ matrix.python }})
@@ -15,7 +19,7 @@ jobs:
         # BOTH arches per OS: linux amd64+arm64, macOS arm64
         # (macos-latest) + amd64 (macos-15-intel), Windows amd64
         # (win_arm64 tests ride the wheels workflow's arm runner)
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
         python: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
