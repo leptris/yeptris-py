@@ -77,7 +77,7 @@ def _c_version(src_root: Path) -> str:
     raise RuntimeError("CMakeLists VERSION not found")
 
 
-def _build_vendored() -> Path | None:
+def _build_vendored():
     # libyeptris rides EVERY artifact: when no prebuilt lib matches
     # (pip fell back to the sdist on an uncovered platform), build
     # the vendored C sources into the package's _platform tree
