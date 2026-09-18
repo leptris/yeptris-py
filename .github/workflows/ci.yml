@@ -12,7 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # BOTH arches per OS: linux amd64+arm64, macOS arm64
+        # (macos-latest) + amd64 (macos-15-intel), Windows amd64
+        # (win_arm64 tests ride the wheels workflow's arm runner)
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
         python: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +44,26 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake ninja
 
+      # Windows: cmake ships on the runner image; the MSVC default
+      # generator builds without vcvars (CMake locates VS itself)
+      - name: Resolve the library path (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
+
       - name: Install build tooling
         run: python3 -m pip install -q setuptools
 
       - name: Build shared library
+        if: runner.os != 'Windows'
         run: |
           cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
@@ -52,11 +71,14 @@ jobs:
           cmake --build libyeptris-src/build
 
       - name: Build the native JSON materializer (opt-in extension)
+        shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
-          else
+          elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
           YEPTRIS_NATIVE_BUILD=1 YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" python3 setup.py build_ext --inplace
 
@@ -64,11 +86,14 @@ jobs:
         run: python3 -m pip install pytest pyyaml
 
       - name: Run tests (native engine exercised)
+        shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
-          else
+          elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
           python3 -m pytest -q
 
@@ -119,6 +144,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake ninja
 
+      # Windows: cmake ships on the runner image; the MSVC default
+      # generator builds without vcvars (CMake locates VS itself)
+      - name: Resolve the library path (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
+
       - name: Install build tooling
         run: python3 -m pip install -q setuptools
 
@@ -130,8 +170,10 @@ jobs:
           cmake --build libyeptris-src/build
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
-          else
+          elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
           YEPTRIS_NATIVE_BUILD=1 YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src" python3 setup.py build_ext --inplace
 
