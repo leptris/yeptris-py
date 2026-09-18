@@ -242,6 +242,7 @@ jobs:
             python -m wheel tags --platform-tag musllinux_1_2_${{ matrix.arch }} --remove dist/*.whl
             python -m venv /work/venv
             /work/venv/bin/pip install -q --no-index dist/*.whl
+            cd /work
             /work/venv/bin/python -c "import yeptris.json as y; print(\"engine:\", y.engine()); import yeptris._native; assert y.engine() == \"native\"; assert yeptris.load(\"a: [1, 2]\") == {\"a\": [1, 2]}; print(\"MUSL SMOKE PASS\")"
           ' || exit 1
           cp "$RUNNER_TEMP/yeptris-py/dist"/*.whl "$RUNNER_TEMP/dist/" 2>/dev/null || true
