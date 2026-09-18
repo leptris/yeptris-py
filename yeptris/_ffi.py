@@ -111,7 +111,20 @@ def _load_lib() -> ctypes.CDLL:
     for path in _candidate_paths():
         try:
             if path.exists():
-                return ctypes.CDLL(str(path))
+                lib = ctypes.CDLL(str(path))
+                # Windows vendors the DLL under BOTH names (the ctypes
+                # glob prefers libyeptris.dll); load the sibling too so
+                # the loader registers the module under whichever name
+                # _native.pyd's import table references
+                sibling = path.with_name(
+                    "yeptris.dll" if path.name == "libyeptris.dll" else "libyeptris.dll"
+                )
+                if sibling != path and sibling.exists():
+                    try:
+                        ctypes.CDLL(str(sibling))
+                    except OSError:
+                        pass
+                return lib
             tried.append(str(path))
         except OSError:
             tried.append(str(path))

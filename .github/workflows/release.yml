@@ -232,11 +232,15 @@ jobs:
             cp /work/yeptris-c/build/src/libyeptris.so /work/yeptris-py/yeptris/_platform/musl/
             cd /work/yeptris-py
             python -m pip install -q wheel build
-            python -m build --wheel
+            # vendor: the wheel must carry the musl lib + native ext
+            # (a pure py3-none-any wheel is the smoke's failure)
+            YEPTRIS_VENDOR=1 YEPTRIS_LIB_PATH=/work/yeptris-c/build/src/libyeptris.so \
+              YEPTRIS_SRC=/work/yeptris-c/src \
+              python -m build --wheel --no-isolation
             python -m wheel tags --platform-tag musllinux_1_2_${{ matrix.arch }} --remove dist/*.whl
             python -m venv /work/venv
             /work/venv/bin/pip install -q --no-index dist/*.whl
-            /work/venv/bin/python -c "import yeptris; assert yeptris.load('a: [1, 2]') == {'a': [1, 2]}; print('MUSL SMOKE PASS')"
+            /work/venv/bin/python -c "import yeptris, yeptris.json as y; assert y.engine() == \"native\"; assert yeptris.load(\"a: [1, 2]\") == {\"a\": [1, 2]}; print(\"MUSL SMOKE PASS\")"
           ' || exit 1
           cp "$RUNNER_TEMP/yeptris-py/dist"/*.whl "$RUNNER_TEMP/dist/" 2>/dev/null || true
           ls -la "$RUNNER_TEMP/dist" | head -5
