@@ -34,6 +34,7 @@ def _src_roots():
     if env:
         yield Path(env)
     here = Path(__file__).resolve().parent
+    yield here / "vendor" / "libyeptris" / "src"
     yield here.parent / "yeptris" / "src"
 
 
@@ -76,9 +77,55 @@ def _c_version(src_root: Path) -> str:
     raise RuntimeError("CMakeLists VERSION not found")
 
 
+def _build_vendored() -> Path | None:
+    # libyeptris rides EVERY artifact: when no prebuilt lib matches
+    # (pip fell back to the sdist on an uncovered platform), build
+    # the vendored C sources into the package's _platform tree
+    here = Path(__file__).resolve().parent
+    vendored = next(
+        (p for p in (here / "vendor" / "libyeptris", here.parent / "yeptris") if (p / "CMakeLists.txt").is_file()),
+        None,
+    )
+    if vendored is None or shutil.which("cmake") is None:
+        return None
+    import re
+    import subprocess
+    import tempfile
+
+    m = re.search(r"^\s*VERSION\s+([0-9.]+)", (vendored / "CMakeLists.txt").read_text(), re.M)
+    if m is None:
+        return None
+    ver = m.group(1)
+    out_dir = here / "yeptris" / "_platform" / f"v{ver}"
+    build = Path(tempfile.mkdtemp(prefix="yeptris-lib-build-"))
+    args = [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_TESTING=OFF",
+        "-DYEPTRIS_BUILD_CLI=OFF",
+        "-DYEPTRIS_BUILD_BENCHMARKS=OFF",
+        "-DYEPTRIS_BUILD_SHARED=ON",
+    ]
+    ok = (
+        subprocess.run(["cmake", "-S", str(vendored), "-B", str(build), *args]).returncode == 0
+        and subprocess.run(["cmake", "--build", str(build), "--config", "Release"]).returncode == 0
+    )
+    if not ok:
+        return None
+    lib = next(build.glob("**/libyeptris.so"), None) or next(build.glob("**/libyeptris.dylib"), None)
+    if lib is None:
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / lib.name
+    shutil.copy2(lib, dest)
+    shutil.rmtree(build, ignore_errors=True)
+    return dest
+
+
 def _native_ext(vendor: bool):
     src_root = next((r for r in _src_roots() if (r / "include").is_dir()), None)
     lib_file = _lib_file()
+    if lib_file is None:
+        lib_file = _build_vendored()
     if src_root is None or lib_file is None:
         return None
 
