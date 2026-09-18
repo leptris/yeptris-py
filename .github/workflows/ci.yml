@@ -17,10 +17,14 @@ jobs:
       fail-fast: false
       matrix:
         # BOTH arches per OS: linux amd64+arm64, macOS arm64
-        # (macos-latest) + amd64 (macos-15-intel), Windows amd64
-        # (win_arm64 tests ride the wheels workflow's arm runner)
+        # (macos-latest) + amd64 (macos-15-intel), Windows amd64+arm64
+        # (win-arm64 Python starts at 3.11 — no 3.9 arm64 build exists)
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
         python: ["3.9", "3.13"]
+        exclude:
+          - { os: windows-11-arm, python: "3.9" }
+        include:
+          - { os: windows-11-arm, python: "3.11" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,7 +62,9 @@ jobs:
             -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build --config Release
-          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          # (ls ... || true): one unmatched glob makes ls exit 2 and
+          # pipefail aborts the step — the DLL lands in either dir
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
           echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
@@ -158,7 +164,9 @@ jobs:
             -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build --config Release
-          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          # (ls ... || true): one unmatched glob makes ls exit 2 and
+          # pipefail aborts the step — the DLL lands in either dir
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
           echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
