@@ -21,12 +21,16 @@ import json as _stdlib_json
 import struct
 from json import JSONDecodeError  # noqa: F401 — the surface's error type
 
+# _ffi FIRST: it eagerly loads the vendored libyeptris by absolute
+# path — on Windows the loader then binds _native.pyd's yeptris.dll
+# import to the already-loaded module (no PATH/add_dll_directory need)
+from . import _ffi as F
+
 try:
     from . import _native as _ext
 except ImportError:
     _ext = None
 
-from . import _ffi as F
 from ._loader import (
     _V_ALIAS,
     _V_ANCHOR,
