@@ -268,7 +268,7 @@ jobs:
   publish:
     name: Publish to PyPI (Trusted Publisher)
     runs-on: ubuntu-latest
-    needs: [wheel, pure, musllinux]
+    needs: [wheel, pure, wheel-musl]
     environment: pypi
     steps:
       - uses: actions/checkout@v4
