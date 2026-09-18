@@ -54,6 +54,13 @@ def _lib_file():
     return next((d / n for d in _lib_dirs() for n in names if (d / n).exists()), None)
 
 
+def _implib_dirs(lib_file: Path):
+    # MSVC links the ext against the IMPORT library (yeptris.lib), not
+    # the DLL — CMake's VS generator writes it under src/Release while
+    # the DLL lands in bin/Release
+    return [lib_file.parent, lib_file.parent.parent / "src" / "Release"]
+
+
 def _c_version(src_root: Path) -> str:
     text = (src_root.parent / "CMakeLists.txt").read_text()
     for line in text.splitlines():
@@ -124,7 +131,7 @@ def _native_ext(vendor: bool):
         "yeptris._native",
         ["ext/yeptris_native.c"],
         include_dirs=include_dirs,
-        library_dirs=[lib_dir],
+        library_dirs=[str(d) for d in _implib_dirs(lib_file)],
         libraries=[lib_name],
         extra_compile_args=["-O3"],
         define_macros=[("Py_LIMITED_API", "0x03090000")],
