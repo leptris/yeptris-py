@@ -180,10 +180,17 @@ _lib.yeptris_serialize.restype = ctypes.c_void_p
 # POSIX: CDLL(None) searches the process symbol table (falls through
 # to libc). Windows has no process fallback — free lives in
 # ucrtbase.dll, the same CRT the MSVC-built DLL allocates from.
+# Prefer the DLL's own allocator-matching free (yeptris_free,
+# libyeptris >= 0.6.6): Windows has no process-symbol fallback for
+# ctypes, and CDLL(None).free resolves only on POSIX. Older sources
+# fall back to the libc/ucrtbase chain.
 try:
-    libc_free = ctypes.CDLL(None).free
-except (OSError, AttributeError):
-    libc_free = ctypes.CDLL("ucrtbase.dll").free
+    libc_free = _lib.yeptris_free
+except AttributeError:
+    try:
+        libc_free = ctypes.CDLL(None).free
+    except (OSError, AttributeError):
+        libc_free = ctypes.CDLL("ucrtbase.dll").free
 libc_free.argtypes = [ctypes.c_void_p]
 
 
