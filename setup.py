@@ -58,11 +58,13 @@ def _implib_dirs(lib_file: Path):
     # MSVC links the ext against the IMPORT library (yeptris.lib), not
     # the DLL — CMake's VS generator stages it away from the DLL
     # (build/src/Release while the DLL is in build/bin/Release), so
-    # search the build tree rather than guessing the offset
+    # search the CMake build dir rather than guessing the offset
+    build_root = next((p for p in lib_file.parents if p.name == "build"), None)
     dirs = [lib_file.parent]
-    for cand in sorted(lib_file.parent.parent.rglob("yeptris.lib")):
-        if cand.parent not in dirs:
-            dirs.append(cand.parent)
+    if build_root is not None:
+        for cand in sorted(build_root.rglob("yeptris.lib")):
+            if cand.parent not in dirs:
+                dirs.append(cand.parent)
     return dirs
 
 
