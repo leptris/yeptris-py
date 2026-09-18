@@ -55,6 +55,7 @@ jobs:
           python-version: "3.13"
 
       - name: Resolve the lockstep coordinates
+        shell: bash
         run: scripts/resolve-version.sh >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core, at the tag)
@@ -172,6 +173,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Resolve the lockstep coordinates
+        shell: bash
         run: scripts/resolve-version.sh >> "$GITHUB_ENV"
       - name: Build pure artifacts
         run: python3 -m pip install -q build && python3 -m build
@@ -233,7 +235,7 @@ jobs:
             cd /work/yeptris-py
             python -m pip install -q wheel build
             # vendor: the wheel must carry the musl lib + native ext
-            # (a pure py3-none-any wheel is the smoke's failure)
+            # (a pure py3-none-any wheel fails the smoke)
             YEPTRIS_VENDOR=1 YEPTRIS_LIB_PATH=/work/yeptris-c/build/src/libyeptris.so \
               YEPTRIS_SRC=/work/yeptris-c/src \
               python -m build --wheel --no-isolation
@@ -257,6 +259,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Resolve the lockstep coordinates
+        shell: bash
         run: scripts/resolve-version.sh >> "$GITHUB_ENV"
       - name: Download the release artifacts
         run: gh release download "${{ env.PKG_TAG }}" -D dist
