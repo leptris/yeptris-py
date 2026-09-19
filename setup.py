@@ -22,6 +22,7 @@ the final artifact loads either way.
 import os
 import shutil
 import sys
+import tarfile
 from pathlib import Path
 
 from setuptools import Extension, setup
@@ -151,6 +152,15 @@ def _native_ext(vendor: bool):
         shutil.copy2(real, vdir / real.name)
         if real.name != lib_file.name:
             shutil.copy2(real, vdir / lib_file.name)
+        # the distribution contract: compiled packages carry the C
+        # sources too (a single tarball — package_data's _platform/*/*
+        # glob is two levels deep) for anyone rebuilding against their
+        # own toolchain; the lib stays the zero-toolchain path
+        c_root = src_root.parent
+        srcball = vdir / "libyeptris-src.tar.gz"
+        with tarfile.open(srcball, "w:gz") as tf:
+            for name in ("CMakeLists.txt", "cmake", "src"):
+                tf.add(c_root / name, arcname=f"libyeptris/{name}")
         # Windows: MSVC names the DLL yeptris.dll; the ctypes ladder
         # globs libyeptris.* — vendor under both names
         if real.name == "yeptris.dll":
