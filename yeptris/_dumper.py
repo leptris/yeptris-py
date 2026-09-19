@@ -157,11 +157,11 @@ def _entries(value, emit, blob, depth, sort_keys):
     return True
 
 
-def dump(value, *, sort_keys: bool = True) -> str:
-    """Serialize one Python value as a single YAML document.
+def build_document(value, *, sort_keys: bool = True):
+    """Build the document handle for one Python value (caller frees).
 
-    PyYAML safe_dump defaults: block style, keys sorted, unicode
-    allowed. Raises TypeError for types with no safe form.
+    The build entries emit the same op stream dump() serializes; the
+    CBOR surface reuses it and encodes the document instead.
     """
     pack_into = F.BUILD_ENTRY.pack_into
     ent_size = F.BUILD_ENTRY.size
@@ -186,12 +186,23 @@ def dump(value, *, sort_keys: bool = True) -> str:
     doc = F._lib.yeptris_document_new()
     if not doc:
         raise F.YeptrisError("document allocation failed")
+    rc = F._lib.yeptris_document_build(
+        doc, bytes(ents[:count * ent_size]), count, bytes(blob), len(blob)
+    )
+    if rc != F.OK:
+        F._lib.yeptris_document_free(doc)
+        raise F.YeptrisError(f"document_build failed: {rc}")
+    return doc
+
+
+def dump(value, *, sort_keys: bool = True) -> str:
+    """Serialize one Python value as a single YAML document.
+
+    PyYAML safe_dump defaults: block style, keys sorted, unicode
+    allowed. Raises TypeError for types with no safe form.
+    """
+    doc = build_document(value, sort_keys=sort_keys)
     try:
-        rc = F._lib.yeptris_document_build(
-            doc, bytes(ents[:count * ent_size]), count, bytes(blob), len(blob)
-        )
-        if rc != F.OK:
-            raise F.YeptrisError(f"document_build failed: {rc}")
         length = F._sz(0)
         out = F._lib.yeptris_serialize(doc, ctypes.byref(length))
         if not out:

@@ -188,6 +188,24 @@ BUILD_SCALAR, BUILD_SEQ, BUILD_MAP, BUILD_END = 1, 2, 3, 4
 _lib.yeptris_serialize.argtypes = [_p, ctypes.POINTER(_sz)]
 _lib.yeptris_serialize.restype = ctypes.c_void_p
 
+# CBOR (RFC 8949; TODO.cbor): absent on older vendored libraries —
+# the yeptris.cbor module feature-detects
+try:
+    _lib.yeptris_cbor_decode.argtypes = [_p, _sz, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_cbor_decode.restype = ctypes.c_void_p
+    _CBOR_ITEM_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t)
+    _lib.yeptris_cbor_decode_sequence.argtypes = [
+        _p, _sz, ctypes.c_uint32, _CBOR_ITEM_CB, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_cbor_decode_sequence.restype = ctypes.c_size_t
+    _lib.yeptris_cbor_encode.argtypes = [_p, ctypes.c_uint32, ctypes.POINTER(_sz)]
+    _lib.yeptris_cbor_encode.restype = ctypes.c_void_p
+    _lib.yeptris_cbor_encode_sequence.argtypes = [
+        ctypes.POINTER(_p), ctypes.c_size_t, ctypes.c_uint32, ctypes.POINTER(_sz)]
+    _lib.yeptris_cbor_encode_sequence.restype = ctypes.c_void_p
+    CBOR_AVAILABLE = True
+except AttributeError:
+    CBOR_AVAILABLE = False
+
 # serialize() returns a malloc'd buffer (caller frees, emit.h) — the
 # library allocates with the system allocator, so libc free is exact.
 # POSIX: CDLL(None) searches the process symbol table (falls through
