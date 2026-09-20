@@ -155,6 +155,12 @@ def _value(value: bytes, tag_id: int, flags: int):
         text = value.decode("utf-8")
         v = _to_int(text)
         return text if v is None else v
+    if tag_id == F.TAG_BINARY:
+        # PyYAML's constructor: !!binary -> base64-decoded bytes (the
+        # lenient decode tolerates folded-block whitespace)
+        import base64
+
+        return base64.b64decode(value)
     if tag_id == F.TAG_NULL:
         return None
     if tag_id == F.TAG_FLOAT:
@@ -222,6 +228,12 @@ def _cvalue(kind, tag, text: bytes, b: int, pay: int):
     """A columnar scalar's Python value — the same conversion layer
     _value applies, entered with the C-pre-converted payload where
     the fast paths allow it."""
+    if kind == _V_STR and tag == F.TAG_BINARY:
+        # PyYAML's constructor: !!binary -> base64-decoded bytes (the
+        # lenient decode tolerates folded-block whitespace)
+        import base64
+
+        return base64.b64decode(text)
     if kind == _V_STR:
         s = text.decode("utf-8")
         if b == 1:  # implicit-plain: PyYAML's date-only timestamps
@@ -308,6 +320,15 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 o, l = offs[i], lens[i]
                 key = arena[o:o + l].decode("utf-8")
                 o2, l2 = offs[i + 1], lens[i + 1]
+                if tags[i + 1] == F.TAG_BINARY:
+                    # PyYAML's constructor: !!binary -> bytes (the pair
+                    # fast path otherwise bypasses _cvalue)
+                    import base64
+
+                    val = base64.b64decode(arena[o2:o2 + l2])
+                    stack[-1][key] = val
+                    i += 2
+                    continue
                 val = arena[o2:o2 + l2].decode("utf-8")
                 if key != "<<":
                     if bools[i] == 1:  # implicit-plain: date reshape, symbol scan
