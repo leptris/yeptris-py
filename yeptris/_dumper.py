@@ -21,7 +21,22 @@ from ._loader import _to_float, _to_int, _to_timestamp
 
 # PyYAML's null/bool resolvers (case variants via lower())
 _NULL_WORDS = {"", "~", "null"}
-_BOOL_WORDS = {"y", "yes", "n", "no", "true", "false", "on", "off"}
+_NEEDS_ESCAPES = __import__("re").compile(r"[\x00-\x08\x0b-\x1f\x7f\u0085\u2028\u2029]")
+
+
+def _quote_style(text: str) -> int:
+    """PyYAML's emitter rule: an ambiguous scalar takes SINGLE quotes
+    when single-quoting can represent it (no control characters, no
+    line breaks), double quotes only when escapes are required."""
+    if "\n" in text or "\t" in text or _NEEDS_ESCAPES.search(text):
+        return F.STYLE_DOUBLE_QUOTED
+    return F.STYLE_SINGLE_QUOTED
+
+
+# PyYAML's resolver set (yaml/resolver.py): single-letter y/n are NOT
+# bools there (Psych's rule, which ruby pins, includes them) — the
+# dump side must quote exactly what PyYAML's would re-shape
+_BOOL_WORDS = {"yes", "no", "true", "false", "on", "off"}
 
 
 _SAFE_WORD = __import__("re").compile(r"^[A-Za-z][A-Za-z0-9_\-./ ]*$")
@@ -101,7 +116,7 @@ def _entries(value, emit, blob, depth, sort_keys):
     elif type(value) is str:
         buf = value.encode("utf-8")
         emit(F.BUILD_SCALAR,
-             F.STYLE_PLAIN if _plain_ok(value) else F.STYLE_DOUBLE_QUOTED,
+             F.STYLE_PLAIN if _plain_ok(value) else _quote_style(value),
              len(blob), len(buf))
         blob += buf
     elif isinstance(value, (bytes, bytearray)):
@@ -145,7 +160,7 @@ def _entries(value, emit, blob, depth, sort_keys):
             if type(k) is str:
                 buf = k.encode("utf-8")
                 emit(F.BUILD_SCALAR,
-                     F.STYLE_PLAIN if _plain_ok(k) else F.STYLE_DOUBLE_QUOTED,
+                     F.STYLE_PLAIN if _plain_ok(k) else _quote_style(k),
                      len(blob), len(buf))
                 blob += buf
             elif not _entries(k, emit, blob, depth + 1, sort_keys):
