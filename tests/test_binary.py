@@ -44,3 +44,22 @@ def test_pyyaml_cross_compatibility():
         assert ours == yaml.dump(case)
         assert yeptris.load(yaml.dump(case)) == case
         assert yaml.safe_load(ours) == case
+
+
+def test_pyyaml_quote_style_parity():
+    """PyYAML's emitter rules: bare y/n stay plain (not bools there),
+    ambiguity words single-quote (double only when escapes are
+    required). Pinned against the reference directly."""
+    pytest.importorskip("yaml")
+    import yaml
+
+    cases = [
+        {"y": 1, "n": 2, "yes": 3, "on": 4},
+        ["y", "n", "yes", "true", "off", "null", "~"],
+        {"k": "it's a #test"},
+        {"k": 5014},
+        {"k": ": leading"},
+        {"k": "ends: "},
+    ]
+    for case in cases:
+        assert yeptris.dump(case) == yaml.dump(case), case
