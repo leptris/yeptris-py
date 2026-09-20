@@ -91,6 +91,10 @@ jobs:
             cmake --build libyeptris-src/build
           fi
 
+      - name: Graft the engine source (packaging doctrine, #108)
+        shell: bash
+        run: bash scripts/graft_engine_source.sh "$GITHUB_WORKSPACE/libyeptris-src"
+
       - name: Build the vendored abi3 wheel
         shell: bash
         run: |
@@ -252,6 +256,7 @@ jobs:
             mkdir -p /work/yeptris-py/yeptris/_platform/musl
             cp /work/yeptris-c/build/src/libyeptris.so /work/yeptris-py/yeptris/_platform/musl/
             cd /work/yeptris-py
+            bash scripts/graft_engine_source.sh /work/yeptris-c
             python -m pip install -q setuptools wheel build
             # vendor: the wheel must carry the musl lib + native ext
             # (a pure py3-none-any wheel fails the smoke)
@@ -297,6 +302,8 @@ jobs:
         run: gh release download "${{ env.PKG_TAG }}" -D dist
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Packaging doctrine gate (#108)
+        run: python scripts/audit_artifacts.py dist
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
