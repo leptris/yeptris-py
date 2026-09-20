@@ -64,6 +64,7 @@ STYLE_PLAIN = 1
 STYLE_SINGLE_QUOTED = 2
 STYLE_DOUBLE_QUOTED = 3
 STYLE_LITERAL = 4
+BUILD_TAG = 5  # apply an explicit tag to the last-placed entry (#300)
 STYLE_FOLDED = 5
 
 # YeptrisEventRecord: type, style, flags, tag_id (uint8 x4) then

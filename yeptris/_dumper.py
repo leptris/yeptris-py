@@ -104,6 +104,19 @@ def _entries(value, emit, blob, depth, sort_keys):
              F.STYLE_PLAIN if _plain_ok(value) else F.STYLE_DOUBLE_QUOTED,
              len(blob), len(buf))
         blob += buf
+    elif isinstance(value, (bytes, bytearray)):
+        # PyYAML's represent_bytes: strict base64 + the !!binary tag +
+        # literal style (its exact emitted form: `!!binary |` + body)
+        import base64
+
+        # PyYAML pads the base64 with a trailing newline (its
+        # represent_scalar style='|'), which selects the clip chomp —
+        # match its exact bytes
+        buf = base64.b64encode(bytes(value)) + b"\n"
+        emit(F.BUILD_SCALAR, F.STYLE_LITERAL, len(blob), len(buf))
+        blob += buf
+        emit(F.BUILD_TAG, 0, len(blob), 8)  # '!!binary' — 8 bytes
+        blob += b"!!binary"
     elif isinstance(value, _dt.datetime):
         buf = value.isoformat(sep=" ").encode()
         emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
