@@ -11,4 +11,5 @@ yeptris/_native.*.so
 
 # wheel-vendor build artifacts (TODO.restructure/42)
 yeptris/_platform/
+yeptris/_vendor/
 vendor/

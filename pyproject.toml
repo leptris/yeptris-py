@@ -33,7 +33,20 @@ test = ["pytest", "pyyaml"]
 
 [tool.setuptools]
 packages = ["yeptris"]
-package-data = { yeptris = ["py.typed", "_platform/*/*"] }
+# #108 (leptris-py#158's pattern): compiled wheels carry the engine
+# binary (_platform) AND its build inputs (_vendor/engine, grafted at
+# wheel-build time) + the rebuild notes. The pure wheel skips the
+# graft via the YEPTRIS_PURE gate.
+package-data = { yeptris = [
+  "py.typed",
+  "_platform/*/*",
+  "_vendor/*",
+  "_vendor/engine/*",
+  "_vendor/engine/*/*",
+  "_vendor/engine/*/*/*",
+  "_vendor/engine/*/*/*/*",
+  "_vendor/engine/*/*/*/*/*",
+] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
