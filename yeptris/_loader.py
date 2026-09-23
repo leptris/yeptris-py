@@ -414,12 +414,12 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
         etype = rec[0]
         tag_id = rec[3]
         if etype == F.SCALAR:
-            v_off, v_len = rec[6], rec[7]
+            v_off, v_len = rec[8], rec[9]
             value = arena[v_off:v_off + v_len] if v_len else b""
             v = _value(value, tag_id, rec[2])
-            a_len = rec[9]
+            a_len = rec[11]
             if a_len:
-                anchors[arena[rec[8]:rec[8] + a_len]] = v
+                anchors[arena[rec[10]:rec[10] + a_len]] = v
             if stack:
                 parent = stack[-1]
                 if type(parent) is list:
@@ -442,9 +442,9 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 docs[-1] = v
         elif etype == F.MAPPING_START or etype == F.SEQUENCE_START:
             fresh = {} if etype == F.MAPPING_START else []
-            a_len = rec[9]
+            a_len = rec[11]
             if a_len:
-                anchors[arena[rec[8]:rec[8] + a_len]] = fresh
+                anchors[arena[rec[10]:rec[10] + a_len]] = fresh
             if stack:
                 parent = stack[-1]
                 if type(parent) is list:
@@ -476,8 +476,8 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             docs.append(None)
         elif etype == F.ALIAS:
             # the alias NAME lives in the value field (events.h)
-            rec_v_len = rec[7]
-            v = anchors.get(arena[rec[6]:rec[6] + rec_v_len] if rec_v_len else b"")
+            rec_v_len = rec[9]
+            v = anchors.get(arena[rec[8]:rec[8] + rec_v_len] if rec_v_len else b"")
             if stack:
                 parent = stack[-1]
                 if type(parent) is list:
