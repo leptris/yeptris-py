@@ -68,11 +68,12 @@ BUILD_TAG = 5  # apply an explicit tag to the last-placed entry (#300)
 STYLE_FOLDED = 5
 
 # YeptrisEventRecord: type, style, flags, tag_id (uint8 x4) then
-# line, col, value_off, value_len, anchor_off, anchor_len, tag_off,
-# tag_len (uint32 x8). sizeof == 36, ABI-pinned.
-_RECORD = struct.Struct("<4B8I")
+# line, col, end_line, end_col, value_off, value_len, anchor_off,
+# anchor_len, tag_off, tag_len (uint32 x10). sizeof == 44 — the
+# #179 end marks added in the C 0.6.19 window (ABI-pinned).
+_RECORD = struct.Struct("<4B10I")
 RECORD_SIZE = _RECORD.size
-assert RECORD_SIZE == 36
+assert RECORD_SIZE == 44
 
 # Flag bits (events.h)
 EF_FLOW = 1 << 0
