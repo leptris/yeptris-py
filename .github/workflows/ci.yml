@@ -35,6 +35,7 @@ jobs:
       # the artifact wheels vendor. Green-on-C-main proved nothing
       # about the tag (the 0.1.13.5 lesson on the Ruby side).
       - name: Resolve the C core ref
+        shell: bash
         run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
@@ -139,6 +140,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Resolve the C core ref
+        shell: bash
         run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
