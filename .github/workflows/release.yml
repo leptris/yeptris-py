@@ -159,7 +159,8 @@ jobs:
         shell: bash
         run: |
           gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
-            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes || \
+            echo "release created concurrently; uploading to it"
           gh release upload "${{ env.PKG_TAG }}" dist/final/*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
@@ -200,7 +201,8 @@ jobs:
         shell: bash
         run: |
           gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
-            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes || \
+            echo "release created concurrently; uploading to it"
           gh release upload "${{ env.PKG_TAG }}" dist/*.tar.gz dist/*py3-none-any*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
@@ -279,7 +281,8 @@ jobs:
           # this the musl wheels never reach PyPI (0.6.7.3's lesson)
           test -n "$(ls "$RUNNER_TEMP/dist"/*.whl 2>/dev/null)" || { echo "no musl wheels"; exit 1; }
           gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
-            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes || \
+            echo "release created concurrently; uploading to it"
           gh release upload "${{ env.PKG_TAG }}" "$RUNNER_TEMP/dist"/*.whl --clobber
         env:
           GH_TOKEN: ${{ github.token }}
