@@ -130,8 +130,14 @@ def _entries(value, emit, blob, depth, sort_keys):
         buf = base64.b64encode(bytes(value)) + b"\n"
         emit(F.BUILD_SCALAR, F.STYLE_LITERAL, len(blob), len(buf))
         blob += buf
-        emit(F.BUILD_TAG, 0, len(blob), 8)  # '!!binary' — 8 bytes
-        blob += b"!!binary"
+        # the engine's tag contract: hosts pass the FULL CORE URI —
+        # the emitter resolves it to the compact !!binary shorthand
+        # itself (a literal "!!binary" payload reads as a LOCAL tag
+        # named "!binary" and re-emits percent-escaped, the engine's
+        # shorthand-collision law)
+        tag = b"tag:yaml.org,2002:binary"
+        emit(F.BUILD_TAG, 0, len(blob), len(tag))
+        blob += tag
     elif isinstance(value, _dt.datetime):
         buf = value.isoformat(sep=" ").encode()
         emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
