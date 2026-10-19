@@ -5,6 +5,14 @@ An FFI-based (no C extension) YAML library over
 counterpart of libleptris. PyYAML-compatible semantics, one shared
 library, zero compilation at install.
 
+Part of the yeptris program: *the best (multiple dimensions)
+YAML/JSON parser/builder ever* — conformance, performance,
+safety/hardening, API surfaces, transport correctness, and trust,
+held simultaneously, in C, Ruby, Rust, and JS. This binding carries
+the PyYAML-compatible surface plus CBOR, tracking every libyeptris
+release in lockstep. The achievement program lives in the engine's
+PLAN.md ("The best-ever program").
+
 ## Install (development)
 
 ```sh
