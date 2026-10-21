@@ -191,11 +191,15 @@ def _entries(value, emit, blob, depth, sort_keys):
     return True
 
 
-def build_document(value, *, sort_keys: bool = True):
+def build_document(value, *, sort_keys: bool = True, schema: int | None = None):
     """Build the document handle for one Python value (caller frees).
 
     The build entries emit the same op stream dump() serializes; the
     CBOR surface reuses it and encodes the document instead.
+    schema: SCHEMA_11_COMPAT types the document's plain scalars through
+    the psych-compatible resolver (the py-equivalent of the plain-
+    safety law), so a host str kept plain ("1e0") stays a CBOR text
+    string instead of resolving as a float (#293).
     """
     pack_into = F.BUILD_ENTRY.pack_into
     ent_size = F.BUILD_ENTRY.size
@@ -217,7 +221,10 @@ def build_document(value, *, sort_keys: bool = True):
     if not _entries(value, emit, blob, 0, sort_keys):
         raise F.YeptrisError("dump: object nests too deeply")
     count = cursor
-    doc = F._lib.yeptris_document_new()
+    if schema is not None and hasattr(F._lib, "yeptris_document_new_schema"):
+        doc = F._lib.yeptris_document_new_schema(int(schema))
+    else:
+        doc = F._lib.yeptris_document_new()
     if not doc:
         raise F.YeptrisError("document allocation failed")
     rc = F._lib.yeptris_document_build(

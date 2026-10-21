@@ -68,3 +68,24 @@ def F_parse_error():
 def test_dump_rejects_unsafe_types():
     with pytest.raises(Exception):
         cbor.dump(object())
+
+
+class TestHostStringTyping:
+    """#293: a host str shaped like an exponent stays a CBOR text
+    string (compat-11 typing: the float law requires the dot and a
+    signed exponent)."""
+
+    @pytest.mark.parametrize("s", ["1e0", "10e9", "1.5e2", "2E5"])
+    def test_exponent_strings_round_trip(self, s):
+        enc = cbor.dump(s)
+        assert s.encode() in enc
+        assert cbor.load(enc) == s
+
+    def test_issue_repro(self):
+        assert cbor.load(cbor.dump("1e0")) == "1e0"
+        assert cbor.load(cbor.dump("1.5")) == "1.5"
+        assert cbor.load(cbor.dump("hello 1e0 world")) == "hello 1e0 world"
+
+    def test_host_numbers_stay_numeric(self):
+        assert cbor.load(cbor.dump(1)) == 1
+        assert cbor.load(cbor.dump(1.5)) == 1.5
