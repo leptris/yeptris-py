@@ -172,4 +172,50 @@ def engine() -> str:
     return "native" if _ext is not None else "strict-ffi"
 
 
-__all__ = ["loads", "engine", "JSONDecodeError"]
+__all__ = ["loads", "dumps", "dump", "engine", "JSONDecodeError"]
+
+def dumps(obj, *, compact: bool = True) -> str:
+    """Serialize a plain Python value as strict JSON (yeptris-py#138).
+
+    Parity with the Ruby binding's ``Yeptris::JSON.dump``: the value
+    builds into a document through the same entry-building walk the
+    CBOR dumper rides, and the C JSON writer emits it. ``compact``
+    (the default) matches Ruby's serialize_json_compact and stdlib
+    json.dumps spacing; ``compact=False`` is the document writer's
+    indented form. Returns ``str`` without the writer's trailing
+    newline.
+
+    Only the JSON data model is encodable (dict/list/str/int/float/
+    bool/None) -- exactly what :func:`loads` produces.
+    """
+    if not F.JSON_SERIALIZE_AVAILABLE:
+        # older vendored engine without the JSON writer: the stdlib
+        # compact form is byte-compatible for the JSON data model
+        if compact:
+            return _stdlib_json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+        return _stdlib_json.dumps(obj, indent=2, ensure_ascii=False)
+    import ctypes
+
+    from . import _dumper
+    doc = _dumper.build_document(obj, sort_keys=False)
+    try:
+        length = F._sz(0)
+        buf = F._lib.yeptris_serialize_json_ex(doc, ctypes.byref(length),
+                                               1 if compact else 0)
+        if not buf:
+            msg, _line, _col = F.last_error()
+            raise F.YeptrisError(msg or "json serialize failed")
+        out = F.read_owned(buf, length.value)
+    finally:
+        F._lib.yeptris_document_free(doc)
+    if out.endswith(b"\n"):
+        out = out[:-1]
+    return out.decode("utf-8")
+
+
+def dump(obj, fp, *, compact: bool = True) -> str:
+    """dumps() into a text file object (stdlib json.dump parity)."""
+    s = dumps(obj, compact=compact)
+    fp.write(s)
+    return s
+
