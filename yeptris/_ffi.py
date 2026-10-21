@@ -159,6 +159,8 @@ _lib.yeptris_last_error.restype = ctypes.c_char_p
 
 _lib.yeptris_document_new.argtypes = []
 _lib.yeptris_document_new.restype = _p
+_lib.yeptris_document_new_schema.argtypes = [ctypes.c_int]
+_lib.yeptris_document_new_schema.restype = _p
 _lib.yeptris_document_free.argtypes = [_p]
 _lib.yeptris_parse_json.argtypes = [ctypes.c_char_p, _sz, ctypes.POINTER(ctypes.c_int)]
 _lib.yeptris_parse_json.restype = _p

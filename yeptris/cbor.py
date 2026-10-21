@@ -97,7 +97,9 @@ def dump(value, *, canonical: bool = True) -> bytes:
     _require()
     # the build walk's key order IS the document's pair order: sorted
     # for canonical, the dict's insertion order otherwise
-    doc = _dumper.build_document(value, sort_keys=canonical)
+    doc = _dumper.build_document(
+        value, sort_keys=canonical, schema=F.SCHEMA_11_COMPAT
+    )
     try:
         length = F._sz(0)
         buf = F._lib.yeptris_cbor_encode(doc, CANONICAL if canonical else 0, ctypes.byref(length))
@@ -113,7 +115,10 @@ def dump_all(values, *, canonical: bool = True) -> bytes:
     """Encode Python values as a CBOR Sequence (RFC 8742)."""
     _require()
     values = list(values)
-    docs = [_dumper.build_document(v, sort_keys=canonical) for v in values]
+    docs = [
+        _dumper.build_document(v, sort_keys=canonical, schema=F.SCHEMA_11_COMPAT)
+        for v in values
+    ]
     try:
         arr = (ctypes.c_void_p * len(docs))(*docs)
         length = F._sz(0)
