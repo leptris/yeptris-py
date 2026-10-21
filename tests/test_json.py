@@ -99,3 +99,35 @@ def test_no_extension_falls_back(monkeypatch):
     monkeypatch.setattr(yjson, "_ext", None)
     assert yjson.engine() == "strict-ffi"
     assert yjson.loads('{"a": 1e3}') == {"a": 1000.0}
+
+
+class TestDumps:
+    """dumps/dump parity with the Ruby binding's JSON.dump (#138)."""
+
+    def test_dumps_compact_matches_stdlib_shape(self):
+        import json as stdlib
+        v = {"a": 1, "b": [1, 2.5, True, None, "x"], "c": {"d": []}}
+        s = yjson.dumps(v)
+        assert isinstance(s, str)
+        assert stdlib.loads(s) == v
+        assert s == stdlib.dumps(v, separators=(",", ":"), ensure_ascii=False)
+
+    def test_dumps_roundtrips_through_loads(self):
+        v = {"k": [1, 2, 3], "s": "text", "n": None, "f": 1.5, "b": False}
+        assert yjson.loads(yjson.dumps(v)) == v
+
+    def test_dumps_indented_form(self):
+        import json as stdlib
+        s = yjson.dumps({"a": 1}, compact=False)
+        assert stdlib.loads(s) == {"a": 1}
+
+    def test_dump_writes_file_object(self):
+        import io
+        fp = io.StringIO()
+        out = yjson.dump({"z": 0}, fp)
+        assert fp.getvalue() == '{"z":0}'
+        assert out == '{"z":0}'
+
+    def test_dumps_unicode(self):
+        s = yjson.dumps({"k": "café"})
+        assert yjson.loads(s) == {"k": "café"}

@@ -190,6 +190,17 @@ BUILD_SCALAR, BUILD_SEQ, BUILD_MAP, BUILD_END = 1, 2, 3, 4
 _lib.yeptris_serialize.argtypes = [_p, ctypes.POINTER(_sz)]
 _lib.yeptris_serialize.restype = ctypes.c_void_p
 
+# JSON serialization (json.h): absent on older vendored libraries —
+# yeptris.json feature-detects
+try:
+    _lib.yeptris_serialize_json.argtypes = [_p, ctypes.POINTER(_sz)]
+    _lib.yeptris_serialize_json.restype = ctypes.c_void_p
+    _lib.yeptris_serialize_json_ex.argtypes = [_p, ctypes.POINTER(_sz), ctypes.c_int]
+    _lib.yeptris_serialize_json_ex.restype = ctypes.c_void_p
+    JSON_SERIALIZE_AVAILABLE = True
+except AttributeError:
+    JSON_SERIALIZE_AVAILABLE = False
+
 # CBOR (RFC 8949; TODO.cbor): absent on older vendored libraries —
 # the yeptris.cbor module feature-detects
 try:
