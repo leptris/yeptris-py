@@ -197,7 +197,9 @@ def dumps(obj, *, compact: bool = True) -> str:
     import ctypes
 
     from . import _dumper
-    doc = _dumper.build_document(obj, sort_keys=False)
+    # every str rides double-quoted (the Ruby dump's law): a quoted
+    # scalar never resolves, so no resolvable-shaped string re-shapes
+    doc = _dumper.build_document(obj, sort_keys=False, quote_strings=True)
     try:
         length = F._sz(0)
         buf = F._lib.yeptris_serialize_json_ex(doc, ctypes.byref(length),
