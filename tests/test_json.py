@@ -131,3 +131,22 @@ class TestDumps:
     def test_dumps_unicode(self):
         s = yjson.dumps({"k": "café"})
         assert yjson.loads(s) == {"k": "café"}
+
+    def test_dumps_resolvable_shaped_strings_stay_text(self):
+        # yeptris-py#141: a host str shaped like exponent notation rode
+        # STYLE_PLAIN and the JSON writer resolved it as a float. The
+        # dump lane quotes every host str (the Ruby dump's law), so no
+        # resolvable shape can re-shape.
+        for s in ("1e0", "10e9", "1.5e2", "yes", "010", "~", "null", "true"):
+            assert yjson.dumps(s) == json.dumps(s), s
+            assert yjson.loads(yjson.dumps(s)) == s, s
+
+    def test_dumps_resolvable_shaped_keys_stay_text(self):
+        s = yjson.dumps({"1e0": "1e0", "yes": [True, 1]})
+        assert yjson.loads(s) == {"1e0": "1e0", "yes": [True, 1]}
+
+    def test_dumps_scalars_unchanged(self):
+        assert yjson.dumps(1) == "1"
+        assert yjson.dumps(1.5) == "1.5"
+        assert yjson.dumps(True) == "true"
+        assert yjson.dumps(None) == "null"

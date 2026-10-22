@@ -88,7 +88,7 @@ def _float_text(value: float) -> str:
 _MAX_DEPTH = 500
 
 
-def _entries(value, emit, blob, depth, sort_keys):
+def _entries(value, emit, blob, depth, sort_keys, quote_strings=False):
     """Emits build entries (document order) and blob slices; returns
     True on success, False on unsupported nesting depth. The scalar
     arms are fully inlined — one function call per node was a
@@ -116,7 +116,8 @@ def _entries(value, emit, blob, depth, sort_keys):
     elif type(value) is str:
         buf = value.encode("utf-8")
         emit(F.BUILD_SCALAR,
-             F.STYLE_PLAIN if _plain_ok(value) else _quote_style(value),
+             F.STYLE_DOUBLE_QUOTED if quote_strings
+             else (F.STYLE_PLAIN if _plain_ok(value) else _quote_style(value)),
              len(blob), len(buf))
         blob += buf
     elif isinstance(value, (bytes, bytearray)):
@@ -166,24 +167,25 @@ def _entries(value, emit, blob, depth, sort_keys):
             if type(k) is str:
                 buf = k.encode("utf-8")
                 emit(F.BUILD_SCALAR,
-                     F.STYLE_PLAIN if _plain_ok(k) else _quote_style(k),
+                     F.STYLE_DOUBLE_QUOTED if quote_strings
+                     else (F.STYLE_PLAIN if _plain_ok(k) else _quote_style(k)),
                      len(blob), len(buf))
                 blob += buf
-            elif not _entries(k, emit, blob, depth + 1, sort_keys):
+            elif not _entries(k, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
-            if not _entries(v, emit, blob, depth + 1, sort_keys):
+            if not _entries(v, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
         emit(F.BUILD_END, 0, 0, 0)
     elif isinstance(value, (list, tuple)):
         emit(F.BUILD_SEQ, 0, 0, 0)
         for item in value:
-            if not _entries(item, emit, blob, depth + 1, sort_keys):
+            if not _entries(item, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
         emit(F.BUILD_END, 0, 0, 0)
     elif isinstance(value, (set, frozenset)):
         emit(F.BUILD_SEQ, 0, 0, 0)
         for item in sorted(value, key=repr):
-            if not _entries(item, emit, blob, depth + 1, sort_keys):
+            if not _entries(item, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
         emit(F.BUILD_END, 0, 0, 0)
     else:
@@ -191,7 +193,8 @@ def _entries(value, emit, blob, depth, sort_keys):
     return True
 
 
-def build_document(value, *, sort_keys: bool = True, schema: int | None = None):
+def build_document(value, *, sort_keys: bool = True, schema: int | None = None,
+                   quote_strings: bool = False):
     """Build the document handle for one Python value (caller frees).
 
     The build entries emit the same op stream dump() serializes; the
@@ -200,6 +203,12 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None):
     the psych-compatible resolver (the py-equivalent of the plain-
     safety law), so a host str kept plain ("1e0") stays a CBOR text
     string instead of resolving as a float (#293).
+    quote_strings: every host str rides DOUBLE_QUOTED regardless of
+    plain-safety — the JSON dump lane's law (yeptris-py#141): JSON
+    strings are quoted on the wire anyway, and a quoted scalar never
+    resolves, so no resolvable-shaped string ("1e0", "yes") can
+    re-shape. Byte-identical to the Ruby binding's dump, which quotes
+    every String.
     """
     pack_into = F.BUILD_ENTRY.pack_into
     ent_size = F.BUILD_ENTRY.size
@@ -218,7 +227,7 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None):
         pack_into(ents, cursor * ent_size, op, style, 0, off, ln)
         cursor += 1
 
-    if not _entries(value, emit, blob, 0, sort_keys):
+    if not _entries(value, emit, blob, 0, sort_keys, quote_strings):
         raise F.YeptrisError("dump: object nests too deeply")
     count = cursor
     if schema is not None and hasattr(F._lib, "yeptris_document_new_schema"):
