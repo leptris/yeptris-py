@@ -178,16 +178,52 @@ def dumps(obj, *, compact: bool = True) -> str:
     """Serialize a plain Python value as strict JSON (yeptris-py#138).
 
     Parity with the Ruby binding's ``Yeptris::JSON.dump``: the value
-    builds into a document through the same entry-building walk the
-    CBOR dumper rides, and the C JSON writer emits it. ``compact``
-    (the default) matches Ruby's serialize_json_compact and stdlib
-    json.dumps spacing; ``compact=False`` is the document writer's
-    indented form. Returns ``str`` without the writer's trailing
-    newline.
+    reaches the C JSON writer as a document. ``compact`` (the default)
+    matches Ruby's serialize_json_compact and stdlib json.dumps
+    spacing; ``compact=False`` is the document writer's indented form.
+    Returns ``str`` without the writer's trailing newline.
 
     Only the JSON data model is encodable (dict/list/str/int/float/
     bool/None) -- exactly what :func:`loads` produces.
+
+    The fast route (yeptris-py#145): the stdlib C encoder produces the
+    wire form in one pass (~1.4ms/185KB where the Python entry walk
+    cost 12ms), the engine re-parses it and the canonical writer emits
+    the contract bytes (#141 quoting, #651 floats). Every case the
+    route cannot represent byte-compatibly -- sets, datetimes, NaN/
+    Infinity, ints beyond the JSON parser's range -- RAISES on the
+    stdlib stage or fails the parse, and the route falls back to the
+    entry-building walk, preserving the exact legacy behavior.
     """
+    if F.JSON_SERIALIZE_AVAILABLE:
+        import ctypes
+
+        try:
+            wire = _stdlib_json.dumps(
+                obj, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            ).encode("utf-8")
+            doc = F._lib.yeptris_parse_json(wire, len(wire), None)
+            if doc:
+                try:
+                    length = F._sz(0)
+                    buf = F._lib.yeptris_serialize_json_ex(
+                        doc, ctypes.byref(length), 1 if compact else 0
+                    )
+                    if buf:
+                        out = F.read_owned(buf, length.value)
+                        if out.endswith(b"\n"):
+                            out = out[:-1]
+                        return out.decode("utf-8")
+                finally:
+                    F._lib.yeptris_document_free(doc)
+        except (TypeError, ValueError, F.YeptrisError, AttributeError):
+            pass  # fall through to the entry walk
+    return _walk_dumps(obj, compact)
+
+
+def _walk_dumps(obj, compact: bool) -> str:
+    """The entry-building walk: the original dumps route (still the
+    CBOR dumper's builder)."""
     if not F.JSON_SERIALIZE_AVAILABLE:
         # older vendored engine without the JSON writer: the stdlib
         # compact form is byte-compatible for the JSON data model
