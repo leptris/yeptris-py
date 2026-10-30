@@ -250,9 +250,9 @@ jobs:
             set -eux
             apk add --no-cache build-base bash cmake ninja git
             git config --global --add safe.directory /work
-            git clone --quiet --depth 1 https://github.com/leptris/yeptris /work/yeptris-c
+            git clone --quiet --depth 1 --branch ${{ env.C_TAG }} https://github.com/leptris/yeptris /work/yeptris-c
             cmake -B /work/yeptris-c/build -S /work/yeptris-c -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
               -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
             cmake --build /work/yeptris-c/build
             mkdir -p /work/yeptris-py/yeptris/_platform/musl
