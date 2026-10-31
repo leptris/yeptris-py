@@ -63,3 +63,16 @@ def test_pyyaml_quote_style_parity():
     ]
     for case in cases:
         assert yeptris.dump(case) == yaml.dump(case), case
+
+
+def test_arena_survives_an_embedded_nul():
+    # the recorder arena is raw, not NUL-terminated: a c_char_p restype
+    # made ctypes truncate the copy at the first NUL -- the first scalar
+    # lost its tail and every scalar after it materialized wrong
+    # (audit 2026-10-31). The columns path was always correct; this is
+    # the legacy RECORD drain (the fallback drain(), and the only path
+    # on pre-columns libraries) -- exercised directly.
+    from yeptris._ffi import drain
+
+    records, arena = drain(b'a: "x\\0y"\nb: tail\n', 0)
+    assert arena == b"ax\x00ybtail"  # keys ride the arena too
