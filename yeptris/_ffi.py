@@ -150,7 +150,10 @@ _lib.yeptris_recorder_feed.restype = ctypes.c_int
 _lib.yeptris_recorder_records.argtypes = [_p, ctypes.POINTER(_sz)]
 _lib.yeptris_recorder_records.restype = _u8p
 _lib.yeptris_recorder_arena.argtypes = [_p, ctypes.POINTER(_sz)]
-_lib.yeptris_recorder_arena.restype = ctypes.c_char_p
+_lib.yeptris_recorder_arena.restype = _u8p  # the arena is NOT NUL-terminated:
+# it carries escaped NULs and binary scalars -- a c_char_p restype makes
+# ctypes truncate the copy at the first NUL (every later scalar
+# materializes wrong) or scan past the buffer when there is none
 _lib.yeptris_recorder_free.argtypes = [_p]
 
 _lib.yeptris_last_error.argtypes = [ctypes.POINTER(ctypes.c_uint32),
@@ -314,7 +317,7 @@ def drain(yaml: bytes, schema: int):
         records = ctypes.string_at(raw, n.value * RECORD_SIZE) if n.value else b""
         alen = ctypes.c_size_t(0)
         arena_p = _lib.yeptris_recorder_arena(rec, ctypes.byref(alen))
-        arena = arena_p[:alen.value] if alen.value else b""
+        arena = ctypes.string_at(arena_p, alen.value) if alen.value else b""
         return records, arena
     finally:
         _lib.yeptris_recorder_free(rec)
