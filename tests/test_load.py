@@ -152,3 +152,19 @@ def test_bytes_and_file_like():
 def test_neutral_surface():
     assert yeptris.load("k: v") == {"k": "v"}
     assert list(yeptris.load_all("--- 1\n--- 2\n")) == [1, 2]
+
+
+def test_undefined_alias_composer_parity():
+    # The engine's scanner carries any alias name; the composer's
+    # rejection is the load's error (PyYAML ComposerError parity).
+    with pytest.raises(ParseError) as ei:
+        pyml.safe_load("bad: *missing")
+    assert "found undefined alias 'missing'" in str(ei.value)
+    # the record walk (the non-columnar fallback) matches
+    with pytest.raises(ParseError):
+        yeptris._loader.load_all(b"bad: *missing")
+    # an anchor legitimately holding null still resolves
+    assert pyml.safe_load("a: &x null\nb: *x\n") == {"a": None, "b": None}
+    # a forward reference rejects too
+    with pytest.raises(ParseError):
+        pyml.safe_load("[*a, &a 1]")
