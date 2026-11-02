@@ -52,6 +52,47 @@ Typing follows PyYAML's SafeLoader (YAML 1.1 implicit typing):
 dot-required floats, timestamps with offsets, merge keys, anchor
 identity. Every deliberate divergence is pinned by a test.
 
+### Validation
+
+The validate face (libyeptris >= 0.6.59): JSON Schema draft 2020-12
+and the YAML schema-family walk over one engine pass — the WHOLE
+report every time (diagnostics enumerate every miss, never
+first-fail), each a `Diagnostic` dataclass (path segments, keyword,
+message, 1-based line/col):
+
+```python
+# needs libyeptris >= 0.6.59
+from yeptris import yaml
+
+schema = '{"type": "object", "required": ["name"]}'
+yaml.validate(b"name: yeptris\n", json_schema=schema)  # []
+yaml.is_valid(b"age: 1\n", json_schema=schema)         # False
+
+for d in yaml.validate(b"age: 1\n", json_schema=schema):
+    print(d.keyword, d.pointer, d.message, d.line, d.col)
+    # required /name missing required property "name" 1 1
+
+s = yaml.compile_schema(schema)  # parse ONCE, validate many
+s.is_valid(b"name: x\n")         # True
+
+yaml.safe_load(b"name: x\n", json_schema=schema)  # {'name': 'x'}
+try:
+    yaml.safe_load(b"age: 1\n", json_schema=schema)  # raises
+except yaml.ValidationError as e:
+    print(e.diagnostics[0].keyword)  # required
+yaml.safe_load(b"a: 1\na: 2\n", validate=True, collect=True)
+# ({'a': 2}, [Diagnostic(... duplicate-key ...)]) — the family walk
+```
+
+Without `json_schema=`, `validate(data)` runs the schema-family walk:
+explicit-tag consistency (spec 10.3) and mapping-key uniqueness by
+canonical form (`0o13` and `0xB` are the same key, spec 3.2.1.3);
+`schema=` selects `SCHEMA_12_JSON` for the spec 10.2 JSON
+productions. A $ref that resolves nowhere is a diagnostic, not an
+exception; a stream that does not parse raises the usual load-stage
+error. Older engines raise `YeptrisError` (`yeptris.yaml` ships the
+feature detection).
+
 The multi-document stream face is PyYAML's law: `load_all`/
 `safe_load_all` are lazy generators (nothing parses until iteration;
 a bad document raises there), empty documents yield `None`, a

@@ -182,15 +182,38 @@ def _entries(value, emit, blob, depth, sort_keys, quote_strings=False):
             if not _entries(item, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
         emit(F.BUILD_END, 0, 0, 0)
-    elif isinstance(value, (set, frozenset)):
-        emit(F.BUILD_SEQ, 0, 0, 0)
+    elif isinstance(value, set):
+        # PyYAML's represent_set: a !!set-tagged mapping with null
+        # values (not a list — the list form reads back as a list and
+        # silently re-shapes the data). Items ride the mapping-KEY
+        # placement (the host's plain-safety decides each), each
+        # followed by an explicit null value. The TAG lands directly
+        # after the BUILD_MAP it tags (#300's last-placed law — after
+        # BUILD_END the last-placed node would be the last VALUE, and
+        # the build's one-trailing-tag admission is scalar-roots-only).
+        emit(F.BUILD_MAP, 0, 0, 0)
+        tag = b"tag:yaml.org,2002:set"
+        emit(F.BUILD_TAG, 0, len(blob), len(tag))
+        blob += tag
         for item in sorted(value, key=repr):
-            if not _entries(item, emit, blob, depth + 1, sort_keys, quote_strings):
+            if type(item) is str:
+                buf = item.encode("utf-8")
+                emit(F.BUILD_SCALAR,
+                     F.STYLE_DOUBLE_QUOTED if quote_strings
+                     else (F.STYLE_PLAIN if _plain_ok(item) else _quote_style(item)),
+                     len(blob), len(buf))
+                blob += buf
+            elif not _entries(item, emit, blob, depth + 1, sort_keys, quote_strings):
                 return False
+            emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), 4)
+            blob += b"null"
         emit(F.BUILD_END, 0, 0, 0)
     else:
-        # RepresenterError subclasses TypeError too: the dumper's
-        # pre-taxonomy contract, which existing code catches
+        # PyYAML parity: a frozenset has no SafeRepresenter (its
+        # represent_undefined raises), and neither do str/int
+        # SUBCLASSES — the exact-type arms above skip them, so they
+        # land here (RepresenterError subclasses TypeError too: the
+        # dumper's pre-taxonomy contract, which existing code catches)
         raise F.RepresenterError(
             f"cannot dump {type(value).__name__!r} safely")
     return True
@@ -239,8 +262,12 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None,
         doc = F._lib.yeptris_document_new()
     if not doc:
         raise F.EmitterError("document allocation failed")
+    # one copy per buffer: the memoryview slice is zero-copy, the
+    # bytes() materialization is the single copy the FFI needs (the
+    # old ents[:n] slice + bytes() pair made it two)
     rc = F._lib.yeptris_document_build(
-        doc, bytes(ents[:count * ent_size]), count, bytes(blob), len(blob)
+        doc, bytes(memoryview(ents)[:count * ent_size]), count,
+        bytes(blob), len(blob)
     )
     if rc != F.OK:
         F._lib.yeptris_document_free(doc)
@@ -248,33 +275,58 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None,
     return doc
 
 
-def dump_all(values, *, sort_keys: bool = True, explicit_start: bool = False) -> str:
+def dump_all(values, *, sort_keys: bool = True, explicit_start: bool = False,
+             width: int | None = None) -> str:
     """Serialize Python values as one multi-document YAML stream.
 
     '---' markers separate the documents (and precede the first when
     explicit_start); zero documents serialize as ''. The dump/load
-    mirror of load_all: dump_all(load_all(x)) round-trips.
+    mirror of load_all: dump_all(load_all(x)) round-trips. `width`
+    rides the engine's emit options (see dump).
     """
     parts: list = []
     for i, value in enumerate(values):
         if explicit_start or i:
             parts.append("---\n")
-        parts.append(dump(value, sort_keys=sort_keys))
+        parts.append(dump(value, sort_keys=sort_keys, width=width))
     return "".join(parts)
 
 
-def dump(value, *, sort_keys: bool = True) -> str:
+def dump(value, *, sort_keys: bool = True, width: int | None = None,
+         explicit_start: bool = False) -> str:
     """Serialize one Python value as a single YAML document.
 
     PyYAML safe_dump defaults: block style, keys sorted, unicode
     allowed. Raises TypeError for types with no safe form.
+
+    width: the engine's best_width (13B) via yeptris_serialize_ex —
+    flow collections wrap after a value once the line exceeds it.
+    The dump face emits BLOCK style only, where the engine does not
+    fold, so the output is width-invariant today (pinned); the emit
+    options are bound so the face rides the serializer's width knob
+    the day flow emission lands. width <= 0 is rejected (the engine
+    maps a non-positive width to its default 80 — a silent surprise
+    PyYAML's width=0-infinite callers must not eat).
     """
+    if width is not None and width < 1:
+        raise ValueError("width must be a positive integer")
     doc = build_document(value, sort_keys=sort_keys)
     try:
         length = F._sz(0)
-        out = F._lib.yeptris_serialize(doc, ctypes.byref(length))
+        if width is not None and F.EMIT_OPTIONS_AVAILABLE:
+            opts = F._EmitOptions(ctypes.sizeof(F._EmitOptions), 0,
+                                  int(width), 0)
+            out = F._lib.yeptris_serialize_ex(doc, ctypes.byref(opts),
+                                              ctypes.byref(length))
+        else:
+            out = F._lib.yeptris_serialize(doc, ctypes.byref(length))
         if not out:
             raise F.EmitterError("serialize failed")
-        return F.read_owned(out, length.value).decode("utf-8")
+        text = F.read_owned(out, length.value).decode("utf-8")
     finally:
         F._lib.yeptris_document_free(doc)
+    if explicit_start:
+        # the dump_all separator law ('---\n'), not PyYAML's
+        # same-line '--- 1' form — one marker style per binding
+        text = "---\n" + text
+    return text

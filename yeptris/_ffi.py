@@ -46,10 +46,13 @@ ERROR_IO = 5
 ERROR_ARG = 6
 ERROR_UNSUPPORTED = 7
 ERROR_INTERNAL = 8
+ERROR_SCHEMA = 9  # validation: the report carries diagnostics (#882)
 
 # YeptrisSchema (resolve.h)
 SCHEMA_12_CORE = 0
 SCHEMA_11_COMPAT = 1
+SCHEMA_12_JSON = 2  # spec 10.2: JSON productions; plain scalars matching
+# none are errors (#882)
 
 # YeptrisEventType (events.h)
 STREAM_START = 1
@@ -283,6 +286,63 @@ try:
     CBOR_AVAILABLE = True
 except AttributeError:
     CBOR_AVAILABLE = False
+
+# Emit options (emit.h 13B): versioned by size — future fields stay
+# optional. best_width drives the width-aware flow folding; a
+# non-NULL struct with canonical=0 is byte-identical to the NULL-opts
+# fidelity route (the emitter's only width consumer is flow wrapping).
+class _EmitOptions(ctypes.Structure):
+    _fields_ = [("size", ctypes.c_uint32), ("canonical", ctypes.c_int),
+                ("best_width", ctypes.c_int),
+                ("explicit_doc_start", ctypes.c_int)]
+
+
+try:
+    _lib.yeptris_serialize_ex.argtypes = [_p, ctypes.POINTER(_EmitOptions),
+                                          ctypes.POINTER(_sz)]
+    _lib.yeptris_serialize_ex.restype = ctypes.c_void_p
+    EMIT_OPTIONS_AVAILABLE = True
+except AttributeError:
+    EMIT_OPTIONS_AVAILABLE = False
+
+# The validation face (validate.h, #882): absent on vendored libraries
+# predating the C 0.6.59 compiled-schema economy — yeptris.yaml
+# feature-detects (the JSON/CBOR pattern).
+class _Diagnostic(ctypes.Structure):
+    # uint32 code/line/col/offset, then the bounded NUL-terminated
+    # path (256) and detail (128) texts — 400 bytes, ABI-pinned (the
+    # C test_abi carries the same static assert)
+    _fields_ = [("code", ctypes.c_uint32), ("line", ctypes.c_uint32),
+                ("col", ctypes.c_uint32), ("offset", ctypes.c_uint32),
+                ("path", ctypes.c_char * 256),
+                ("detail", ctypes.c_char * 128)]
+
+
+assert ctypes.sizeof(_Diagnostic) == 16 + 256 + 128
+
+try:
+    _lib.yeptris_validate.argtypes = [ctypes.c_char_p, _sz, ctypes.c_int,
+                                      ctypes.POINTER(_p)]
+    _lib.yeptris_validate.restype = ctypes.c_int
+    _lib.yeptris_json_schema_validate.argtypes = [ctypes.c_char_p, _sz,
+                                                  ctypes.c_char_p, _sz,
+                                                  ctypes.POINTER(_p)]
+    _lib.yeptris_json_schema_validate.restype = ctypes.c_int
+    _lib.yeptris_schema_compile.argtypes = [ctypes.c_char_p, _sz]
+    _lib.yeptris_schema_compile.restype = _p
+    _lib.yeptris_schema_validate.argtypes = [_p, ctypes.c_char_p, _sz,
+                                             ctypes.POINTER(_p)]
+    _lib.yeptris_schema_validate.restype = ctypes.c_int
+    _lib.yeptris_schema_free.argtypes = [_p]
+    _lib.yeptris_validate_report_count.argtypes = [_p]
+    _lib.yeptris_validate_report_count.restype = _sz
+    # borrowed from the report — valid until validate_report_free
+    _lib.yeptris_validate_report_at.argtypes = [_p, _sz]
+    _lib.yeptris_validate_report_at.restype = _u8p
+    _lib.yeptris_validate_report_free.argtypes = [_p]
+    VALIDATE_AVAILABLE = True
+except AttributeError:
+    VALIDATE_AVAILABLE = False
 
 # serialize() returns a malloc'd buffer (caller frees, emit.h) — the
 # library allocates with the system allocator, so libc free is exact.
