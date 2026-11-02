@@ -64,9 +64,41 @@ def test_depth_limit_is_parser_error():
 
 
 def test_encoding_error_is_reader_error():
-    # engine ERROR_ENCODING -> the reader stage
-    with pytest.raises(ReaderError):
-        pyml.safe_load(b"\xff\xfe")
+    # engine ERROR_ENCODING -> the reader stage. The mapping is tested
+    # on the status itself (every engine vintage); the integration case
+    # is pinned per vintage, because the strict front-end that emits
+    # ERROR_ENCODING at the recorder landed in the C 0.6.57 wave (the
+    # #877 encoding law). The lockstep ref this suite's CI pins
+    # (v0.6.56) passes raw bytes through as CONTENT: its BOM-only
+    # UTF-16LE stream parses as a scalar, and the binding's own arena
+    # decode refuses it -- never silently. One input, two designed
+    # behaviors, decided by the loaded engine's version.
+    import yeptris._ffi as F
+
+    assert isinstance(
+        F._stage_error(F.ERROR_ENCODING, "ill-formed input encoding", 1, 1),
+        ReaderError)
+    assert isinstance(F._stage_error(F.ERROR_PARSE, "boom", 1, 1), ParserError)
+    assert isinstance(F._stage_error(F.ERROR_DEPTH, "boom", 1, 1), ParserError)
+    assert isinstance(
+        F._stage_error(F.ERROR_MEMORY, "boom", 0, 0), yeptris.ParseError)
+    if F._version_tuple(F._ENGINE_VERSION) >= (0, 6, 57):
+        # strict front-end: a bare UTF-16LE BOM cannot be completed to
+        # a stream -> ERROR_ENCODING -> the reader stage
+        with pytest.raises(ReaderError):
+            pyml.safe_load(b"\xff\xfe")
+        with pytest.raises(ReaderError):
+            yeptris._loader.load_all(b"\xff\xfe")
+    else:
+        # pre-strict front-end: the BOM rides through as content and
+        # the scalar decode rejects it -- never silently. (Audit-branch
+        # dev builds may carry the strict law under an old version
+        # string; both verdicts honor the contract there, and the
+        # released boundary above is the pin.)
+        with pytest.raises((UnicodeDecodeError, ReaderError)):
+            pyml.safe_load(b"\xff\xfe")
+        with pytest.raises((UnicodeDecodeError, ReaderError)):
+            yeptris._loader.load_all(b"\xff\xfe")
 
 
 def test_undefined_alias_is_composer_error():
