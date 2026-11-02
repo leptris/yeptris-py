@@ -189,7 +189,10 @@ def _entries(value, emit, blob, depth, sort_keys, quote_strings=False):
                 return False
         emit(F.BUILD_END, 0, 0, 0)
     else:
-        raise TypeError(f"cannot dump {type(value).__name__!r} safely")
+        # RepresenterError subclasses TypeError too: the dumper's
+        # pre-taxonomy contract, which existing code catches
+        raise F.RepresenterError(
+            f"cannot dump {type(value).__name__!r} safely")
     return True
 
 
@@ -228,20 +231,20 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None,
         cursor += 1
 
     if not _entries(value, emit, blob, 0, sort_keys, quote_strings):
-        raise F.YeptrisError("dump: object nests too deeply")
+        raise F.EmitterError("dump: object nests too deeply")
     count = cursor
     if schema is not None and hasattr(F._lib, "yeptris_document_new_schema"):
         doc = F._lib.yeptris_document_new_schema(int(schema))
     else:
         doc = F._lib.yeptris_document_new()
     if not doc:
-        raise F.YeptrisError("document allocation failed")
+        raise F.EmitterError("document allocation failed")
     rc = F._lib.yeptris_document_build(
         doc, bytes(ents[:count * ent_size]), count, bytes(blob), len(blob)
     )
     if rc != F.OK:
         F._lib.yeptris_document_free(doc)
-        raise F.YeptrisError(f"document_build failed: {rc}")
+        raise F.EmitterError(f"document_build failed: {rc}")
     return doc
 
 
@@ -256,7 +259,7 @@ def dump(value, *, sort_keys: bool = True) -> str:
         length = F._sz(0)
         out = F._lib.yeptris_serialize(doc, ctypes.byref(length))
         if not out:
-            raise F.YeptrisError("serialize failed")
+            raise F.EmitterError("serialize failed")
         return F.read_owned(out, length.value).decode("utf-8")
     finally:
         F._lib.yeptris_document_free(doc)

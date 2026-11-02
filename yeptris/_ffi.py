@@ -19,6 +19,23 @@ import struct
 import sys
 from pathlib import Path
 
+# The exception taxonomy is defined ONCE in _errors (a leaf module:
+# importing it from the yaml subpackage from here would cycle the
+# package import). Re-exported so `F.ParseError` keeps working.
+from ._errors import (  # noqa: F401 — re-exports
+    ComposerError,
+    ConstructorError,
+    EmitterError,
+    MarkedYAMLError,
+    ParserError,
+    ReaderError,
+    RepresenterError,
+    ScannerError,
+    YAMLError,
+    ParseError,
+    YeptrisError,
+)
+
 # YeptrisStatus (error.h)
 OK = 0
 ERROR_PARSE = 1
@@ -81,18 +98,46 @@ EF_EXPLICIT = 1 << 1
 EF_IMPLICIT = 1 << 2
 
 
-class YeptrisError(Exception):
-    """Base: something went wrong inside or around the library."""
+# --- engine-version floor (import gate) --------------------------------
+# The event-record layout is ABI-pinned to the C 0.6.19 window (44-byte
+# records, the #179 end marks). A dev tree once loaded v0.6.7 against a
+# 0.6.51-era package: record strides changed under it and every scalar
+# silently corrupted. Fail AT IMPORT, naming both versions.
+
+ENGINE_VERSION_FLOOR = (0, 6, 19)
 
 
-class ParseError(YeptrisError):
-    """Malformed YAML. Carries the 1-based line and column."""
+def _version_tuple(text: str) -> tuple:
+    """'0.6.55' -> (0, 6, 55); tolerates decoration ('v0.6.55.0',
+    '0.6.19-beta') and stops at the first part carrying no digits
+    (garbage -> (0, 0, 0), which fails the floor — an unreadable
+    version is a stale engine)."""
+    parts = []
+    for part in text.strip().split("."):
+        digits = ""
+        for ch in part:
+            if ch.isdigit():
+                digits += ch
+            elif digits:
+                break  # suffix after the number ('19-beta')
+        if not digits:
+            break
+        parts.append(int(digits))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
 
-    def __init__(self, message: str, line: int = 0, column: int = 0):
-        super().__init__(f"{message} at line {line}, column {column}"
-                         if line else message)
-        self.line = line
-        self.column = column
+
+def check_engine_version(version: str, floor: tuple = ENGINE_VERSION_FLOOR) -> None:
+    """Raise ImportError when the loaded engine is below the pinned
+    floor, naming BOTH versions (the loaded one and the floor)."""
+    if _version_tuple(version) < tuple(floor):
+        raise ImportError(
+            "libyeptris %s is too old for this yeptris package: the "
+            "pinned event-record strides require libyeptris >= %s "
+            "(set YEPTRIS_LIB_PATH to a newer build)"
+            % (version, ".".join(str(p) for p in floor))
+        )
 
 
 def _candidate_paths():
@@ -139,6 +184,21 @@ def _load_lib() -> ctypes.CDLL:
 
 _lib = _load_lib()
 
+try:  # yeptris_version exists since the C repo's initial commit, so a
+    # library WITHOUT the symbol predates the floor entirely — fail closed
+    _lib.yeptris_version.restype = ctypes.c_char_p
+    _raw_version = _lib.yeptris_version()
+except AttributeError:
+    _raw_version = None
+if not _raw_version:
+    raise ImportError(
+        "could not determine the libyeptris version (the library "
+        "carries no yeptris_version symbol, or it returned NULL): "
+        "this yeptris package requires libyeptris >= %s"
+        % ".".join(str(p) for p in ENGINE_VERSION_FLOOR)
+    )
+_ENGINE_VERSION = _raw_version.decode("ascii", "replace")
+check_engine_version(_ENGINE_VERSION)
 _u8p = ctypes.POINTER(ctypes.c_char)
 _p = ctypes.c_void_p
 _sz = ctypes.c_size_t
@@ -250,6 +310,21 @@ def last_error():
     return (msg.decode("utf-8", "replace") if msg else "parse error",
             line.value, col.value)
 
+
+def _stage_error(status: int, msg: str, line: int, col: int) -> YeptrisError:
+    """Engine status -> the taxonomy stage. The engine fuses scanning
+    into its single parse status, so scan- and parse-stage rejections
+    both surface as ParserError (ScannerError is reserved — see
+    _errors.py); ERROR_ENCODING is the reader stage; anything else
+    (memory/arg/internal) stays the legacy ParseError so every load
+    failure keeps catching as yeptris.ParseError."""
+    if status == ERROR_ENCODING:
+        return ReaderError(msg, line, col)
+    if status in (ERROR_PARSE, ERROR_DEPTH):
+        return ParserError(msg, line, col)
+    return ParseError(msg, line, col)
+
+
 def parse_json_strict(b: bytes) -> None:
     """The RFC 8259 validator gate: raises ParseError on anything
     strict JSON rejects (TODO.restructure/41 — the ctypes JSON
@@ -311,7 +386,7 @@ def drain(yaml: bytes, schema: int):
         st = _lib.yeptris_recorder_feed(rec, yaml, len(yaml), 1)
         if st != OK:
             msg, line, col = last_error()
-            raise ParseError(msg, line, col)
+            raise _stage_error(st, msg, line, col)
         n = ctypes.c_size_t(0)
         raw = _lib.yeptris_recorder_records(rec, ctypes.byref(n))
         records = ctypes.string_at(raw, n.value * RECORD_SIZE) if n.value else b""
@@ -338,7 +413,7 @@ def drain_columns(yaml: bytes, schema: int):
     st = _lib.yeptris_value_drain_columns(yaml, len(yaml), schema, ctypes.byref(c))
     if st != OK:
         msg, line, col = last_error()
-        raise ParseError(msg, line, col)
+        raise _stage_error(st, msg, line, col)
 
     def _close():
         _lib.yeptris_value_free_columns(ctypes.byref(c))

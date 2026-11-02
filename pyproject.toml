@@ -32,7 +32,7 @@ Source = "https://github.com/leptris/yeptris-py"
 test = ["pytest", "pyyaml"]
 
 [tool.setuptools]
-packages = ["yeptris"]
+packages = ["yeptris", "yeptris.yaml"]
 # #108 (leptris-py#158's pattern): compiled wheels carry the engine
 # binary (_platform) AND its build inputs (_vendor/engine, grafted at
 # wheel-build time) + the rebuild notes. The pure wheel skips the
