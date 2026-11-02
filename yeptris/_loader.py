@@ -375,11 +375,20 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 if target is not None:
                     _merge(target, closed)
             elif kind == _V_DOC:
+                # anchors are per-document (PyYAML's composer resets
+                # per document): a later document's alias must not
+                # resolve into an earlier one's name
+                anchors.clear()
                 docs.append(None)
             elif kind == _V_ALIAS:
                 l = lens[i]
-                v = anchors.get(arena[offs[i]:offs[i] + l] if l else b"")
-                _place(v, F.TAG_STR)
+                name = arena[offs[i]:offs[i] + l] if l else b""
+                if name not in anchors:
+                    # PyYAML's composer: the scanner carries any name,
+                    # an unresolvable one is the load's error.
+                    raise F.ParseError("found undefined alias '%s'"
+                                       % name.decode("utf-8", "replace"))
+                _place(anchors[name], F.TAG_STR)
             elif kind == _V_ANCHOR:
                 pending_anchor = arena[offs[i]:offs[i] + lens[i]]
             else:
@@ -473,11 +482,21 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             if target is not None:
                 _merge(target, closed)
         elif etype == F.DOCUMENT_START:
+            # anchors are per-document (PyYAML's composer resets per
+            # document): a later document's alias must not resolve
+            # into an earlier one's name
+            anchors.clear()
             docs.append(None)
         elif etype == F.ALIAS:
             # the alias NAME lives in the value field (events.h)
             rec_v_len = rec[9]
-            v = anchors.get(arena[rec[8]:rec[8] + rec_v_len] if rec_v_len else b"")
+            name = arena[rec[8]:rec[8] + rec_v_len] if rec_v_len else b""
+            if name not in anchors:
+                # PyYAML's composer: the scanner carries any name, an
+                # unresolvable one is the load's error.
+                raise F.ParseError("found undefined alias '%s'"
+                                   % name.decode("utf-8", "replace"))
+            v = anchors[name]
             if stack:
                 parent = stack[-1]
                 if type(parent) is list:
