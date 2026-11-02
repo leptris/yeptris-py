@@ -214,7 +214,7 @@ if os.environ.get("YEPTRIS_NATIVE_BUILD", "") == "1" and ext is None:
     sys.exit("YEPTRIS_NATIVE_BUILD=1 but libyeptris was not found "
              "(set YEPTRIS_LIB_PATH and YEPTRIS_SRC)")
 
-_packages = ["yeptris"]
+_packages = ["yeptris", "yeptris.yaml"]
 _platform_root = Path(__file__).resolve().parent / "yeptris" / "_platform"
 if _platform_root.is_dir():
     _packages.append("yeptris._platform")

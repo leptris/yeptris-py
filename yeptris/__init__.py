@@ -5,7 +5,19 @@ neutral surface lives here; `yeptris.yaml` carries the PyYAML-
 compatible one.
 """
 
-from ._ffi import ParseError, YeptrisError
+from ._errors import (  # noqa: F401 — the taxonomy, at package level too
+    ComposerError,
+    ConstructorError,
+    EmitterError,
+    MarkedYAMLError,
+    ParserError,
+    ReaderError,
+    RepresenterError,
+    ScannerError,
+    YAMLError,
+    ParseError,
+    YeptrisError,
+)
 from ._dumper import dump
 from ._loader import load, load_all
 
@@ -29,5 +41,9 @@ except Exception:  # pragma: no cover - metadata always present when installed
 
 __all__ = [
     "load", "load_all", "dump",
-    "YeptrisError", "ParseError", "__version__",
+    "YeptrisError", "ParseError",
+    "YAMLError", "MarkedYAMLError",
+    "ReaderError", "ScannerError", "ParserError", "ComposerError",
+    "ConstructorError", "RepresenterError", "EmitterError",
+    "__version__",
 ]

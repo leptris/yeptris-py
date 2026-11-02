@@ -128,10 +128,17 @@ def _to_timestamp(text: str):
                         int(g["second"]), micro, tzinfo=tzinfo)
 
 
-def _value(value: bytes, tag_id: int, flags: int):
+def _value(value: bytes, tag_id: int, flags: int, line: int = 0, column: int = 0):
     """A scalar's Python value: byte-level fast paths for the shapes
     that dominate real documents (int()/float() accept bytes), the
-    full PyYAML-conversion layer for everything else."""
+    full PyYAML-conversion layer for everything else.
+
+    A resolver INT/FLOAT/BOOL verdict the conversion layer cannot
+    build is an explicitly-tagged scalar the constructor rejects
+    (``!!int xyz`` — implicit plain text never arrives mis-shaped,
+    the resolver tagged it). PyYAML's SafeLoader lets the raw
+    int()/dict-lookup error escape there; this binding raises
+    ConstructorError (catchable as yaml.YAMLError) in both walks."""
     if tag_id == F.TAG_STR:
         text = value.decode("utf-8")
         if flags & F.EF_IMPLICIT:
@@ -154,7 +161,10 @@ def _value(value: bytes, tag_id: int, flags: int):
             return int(value)
         text = value.decode("utf-8")
         v = _to_int(text)
-        return text if v is None else v
+        if v is None:
+            raise F.ConstructorError(
+                "could not construct an int from %r" % text, line, column)
+        return v
     if tag_id == F.TAG_BINARY:
         # PyYAML's constructor: !!binary -> base64-decoded bytes (the
         # lenient decode tolerates folded-block whitespace)
@@ -174,7 +184,10 @@ def _value(value: bytes, tag_id: int, flags: int):
                 pass
         text = value.decode("utf-8")
         v = _to_float(text)
-        return text if v is None else v
+        if v is None:
+            raise F.ConstructorError(
+                "could not construct a float from %r" % text, line, column)
+        return v
     text = value.decode("utf-8")
     if tag_id == F.TAG_BOOL:
         # Psych resolves single-char y/n as bool; PyYAML does not —
@@ -187,23 +200,45 @@ def _value(value: bytes, tag_id: int, flags: int):
             return True
         if lowered in _BOOL_FALSE:
             return False
-        return text
+        raise F.ConstructorError(
+            "could not construct a bool from %r" % text, line, column)
     if tag_id == F.TAG_TIMESTAMP:
         v = _to_timestamp(text)
         return text if v is None else v
     return text
 
 
-def _merge(target: dict, source) -> None:
-    """'<<' merge: existing keys win; sequences merge in order."""
+def _kind_name(value) -> str:
+    """PyYAML's node.id vocabulary for constructor error messages."""
+    if isinstance(value, dict):
+        return "mapping"
+    if isinstance(value, list):
+        return "sequence"
+    return "scalar"
+
+
+def _merge(target: dict, source, line: int = 0, column: int = 0) -> None:
+    """'<<' merge: existing keys win; sequences merge in order. The
+    merge value MUST be a mapping or a sequence of mappings (PyYAML's
+    flatten_mapping) — anything else raises ConstructorError with
+    PyYAML's exact problem string. The walks used to disagree here
+    (the columns walk dropped a scalar merge value silently, the
+    record walk kept it as a literal '<<' key); both now reject."""
     if isinstance(source, dict):
         for k, v in source.items():
             target.setdefault(k, v)
     elif isinstance(source, list):
         for item in source:
-            if isinstance(item, dict):
-                for k, v in item.items():
-                    target.setdefault(k, v)
+            if not isinstance(item, dict):
+                raise F.ConstructorError(
+                    "expected a mapping for merging, but found %s"
+                    % _kind_name(item), line, column)
+            for k, v in item.items():
+                target.setdefault(k, v)
+    else:
+        raise F.ConstructorError(
+            "expected a mapping or list of mappings for merging, but "
+            "found %s" % _kind_name(source), line, column)
 
 
 # YeptrisValueKind (values.h)
@@ -250,7 +285,11 @@ def _cvalue(kind, tag, text: bytes, b: int, pay: int):
             return pay  # the C conversion already ran
         s = text.decode("utf-8")
         v = _to_int(s)
-        return s if v is None else v
+        if v is None:
+            # the columnar drain carries no marks — the message is
+            # unmarked, like every columns-walk error
+            raise F.ConstructorError("could not construct an int from %r" % s)
+        return v
     if kind == _V_NULL:
         return None
     if kind == _V_FLOAT:
@@ -258,12 +297,21 @@ def _cvalue(kind, tag, text: bytes, b: int, pay: int):
             return struct.unpack("<d", struct.pack("<q", pay))[0]
         s = text.decode("utf-8")
         v = _to_float(s)
-        return s if v is None else v
+        if v is None:
+            raise F.ConstructorError("could not construct a float from %r" % s)
+        return v
     s = text.decode("utf-8")
     if kind == _V_BOOL:
         if len(s) == 1:
             return s
-        return True if b == 1 else False
+        lowered = s.lower()
+        if lowered in _BOOL_TRUE:
+            return True
+        if lowered in _BOOL_FALSE:
+            return False
+        # bools[i] is the BOOL PAYLOAD here, not the implicit flag —
+        # the word sets are the lockstep verdict with the record walk
+        raise F.ConstructorError("could not construct a bool from %r" % s)
     if kind == _V_TS:
         v = _to_timestamp(s)
         return s if v is None else v
@@ -385,9 +433,12 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 name = arena[offs[i]:offs[i] + l] if l else b""
                 if name not in anchors:
                     # PyYAML's composer: the scanner carries any name,
-                    # an unresolvable one is the load's error.
-                    raise F.ParseError("found undefined alias '%s'"
-                                       % name.decode("utf-8", "replace"))
+                    # an unresolvable one is the load's error
+                    # (ComposerError, catchable as the legacy
+                    # ParseError; the columnar drain carries no marks)
+                    raise F.ComposerError(
+                        "found undefined alias '%s'"
+                        % name.decode("utf-8", "replace"))
                 _place(anchors[name], F.TAG_STR)
             elif kind == _V_ANCHOR:
                 pending_anchor = arena[offs[i]:offs[i] + lens[i]]
@@ -425,7 +476,7 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
         if etype == F.SCALAR:
             v_off, v_len = rec[8], rec[9]
             value = arena[v_off:v_off + v_len] if v_len else b""
-            v = _value(value, tag_id, rec[2])
+            v = _value(value, tag_id, rec[2], rec[4], rec[5])
             a_len = rec[11]
             if a_len:
                 anchors[arena[rec[10]:rec[10] + a_len]] = v
@@ -440,11 +491,15 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
                         pending_tag[-1] = tag_id
                     else:
                         pending_key[-1] = None
-                        if tag_id == F.TAG_MERGE:
+                        # the merge decision is the KEY's resolver tag
+                        # (a quoted '<<' is a literal key) — the value's
+                        # tag_id said nothing about merging, which is
+                        # what let `<<: 5` slip through as a literal
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
                             if type(v) in (dict, list) and not v:
                                 merge_targets[id(v)] = parent
                             else:
-                                _merge(parent, v)
+                                _merge(parent, v, rec[4], rec[5])
                         else:
                             parent[key] = v
             else:
@@ -493,9 +548,11 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             name = arena[rec[8]:rec[8] + rec_v_len] if rec_v_len else b""
             if name not in anchors:
                 # PyYAML's composer: the scanner carries any name, an
-                # unresolvable one is the load's error.
-                raise F.ParseError("found undefined alias '%s'"
-                                   % name.decode("utf-8", "replace"))
+                # unresolvable one is the load's error (ComposerError,
+                # catchable as the legacy ParseError)
+                raise F.ComposerError(
+                    "found undefined alias '%s'" % name.decode("utf-8", "replace"),
+                    rec[4], rec[5])
             v = anchors[name]
             if stack:
                 parent = stack[-1]
@@ -509,7 +566,7 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
                     else:
                         pending_key[-1] = None
                         if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
-                            _merge(parent, v)
+                            _merge(parent, v, rec[4], rec[5])
                         else:
                             parent[key] = v
             else:
