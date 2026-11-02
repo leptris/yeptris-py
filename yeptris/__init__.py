@@ -18,7 +18,7 @@ from ._errors import (  # noqa: F401 — the taxonomy, at package level too
     ParseError,
     YeptrisError,
 )
-from ._dumper import dump
+from ._dumper import dump, dump_all
 from ._loader import load, load_all
 
 try:  # pyproject.toml is the version SSOT; the dev tree (not
@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover - metadata always present when installed
     __version__ = "0.0.0"
 
 __all__ = [
-    "load", "load_all", "dump",
+    "load", "load_all", "dump", "dump_all",
     "YeptrisError", "ParseError",
     "YAMLError", "MarkedYAMLError",
     "ReaderError", "ScannerError", "ParserError", "ComposerError",
