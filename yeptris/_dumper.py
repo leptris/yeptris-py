@@ -248,6 +248,21 @@ def build_document(value, *, sort_keys: bool = True, schema: int | None = None,
     return doc
 
 
+def dump_all(values, *, sort_keys: bool = True, explicit_start: bool = False) -> str:
+    """Serialize Python values as one multi-document YAML stream.
+
+    '---' markers separate the documents (and precede the first when
+    explicit_start); zero documents serialize as ''. The dump/load
+    mirror of load_all: dump_all(load_all(x)) round-trips.
+    """
+    parts: list = []
+    for i, value in enumerate(values):
+        if explicit_start or i:
+            parts.append("---\n")
+        parts.append(dump(value, sort_keys=sort_keys))
+    return "".join(parts)
+
+
 def dump(value, *, sort_keys: bool = True) -> str:
     """Serialize one Python value as a single YAML document.
 

@@ -37,17 +37,30 @@ from yeptris import yaml  # PyYAML-compatible surface
 yaml.safe_load("name: yeptris\nrating: 10\n")
 # {'name': 'yeptris', 'rating': 10}
 
-yaml.safe_load_all("--- 1\n--- two\n")   # [1, 'two']
+yaml.safe_load_all("--- 1\n--- two\n")   # lazy generator: [1, 'two']
 yaml.safe_dump({"b": 2, "a": [1, "x"]})  # 'a:\n  - 1\n  - x\nb: 2\n'
+yaml.safe_dump_all([{"a": 1}, {"b": 2}]) # 'a: 1\n---\nb: 2\n'
 
 yeptris.load("k: v")        # the neutral surface
 yeptris.dump({"k": [1, 2]})
+yeptris.load_all("--- 1\n--- 2\n")  # every document, as a list
+yeptris.dump_all([{"k": 1}, [2]])   # the '---'-separated stream
 ```
 
 Typing follows PyYAML's SafeLoader (YAML 1.1 implicit typing):
 `yes/no/on/off` booleans, `0x`/leading-0/`0b`/sexagesimal integers,
 dot-required floats, timestamps with offsets, merge keys, anchor
 identity. Every deliberate divergence is pinned by a test.
+
+The multi-document stream face is PyYAML's law: `load_all`/
+`safe_load_all` are lazy generators (nothing parses until iteration;
+a bad document raises there), empty documents yield `None`, a
+zero-document stream yields nothing, and `safe_load` answers the
+first document only — silently, the binding's documented divergence
+(PyYAML raises on multi-document input). One pinned divergence
+remains: the engine parses a stream in one bulk drain, so an invalid
+stream raises at the first iteration with no documents yielded
+(PyYAML's per-document parser yields the good prefix first).
 
 ## Design
 
