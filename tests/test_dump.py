@@ -6,6 +6,7 @@ import pytest
 import yaml as pyyaml
 
 from yeptris import yaml as pyml
+from yeptris.yaml import RepresenterError
 
 
 def test_block_style_sorted_keys():
@@ -147,3 +148,110 @@ def test_colon_bearing_strings_pyyaml_roundtrip():
     h = {"sym": ":a", "url": "https://example.com/x", "mixed": "12:34abc"}
     text = pyml.safe_dump(h)
     assert pyyaml.safe_load(text) == h
+
+
+# --- PyYAML representer parity (audit round 7) ---------------------------
+
+def test_set_dumps_as_pyyaml_set():
+    # PyYAML's represent_set: a !!set-tagged mapping with null values.
+    # The old list form read back as a LIST in every loader — a silent
+    # data re-shape; the tagged mapping reads back as a set in PyYAML.
+    text = pyml.safe_dump({1, 2})
+    assert text == "!!set\n1: null\n2: null\n"
+    assert pyyaml.safe_load(text) == {1, 2}
+    # ours has no !!set constructor yet (the columnar drain carries no
+    # tag text, so the route cannot see it — carried engine gap,
+    # pinned, never silent): the tagged mapping arrives as a mapping
+    assert pyml.safe_load(text) == {1: None, 2: None}
+
+
+def test_sets_inside_collections_roundtrip_through_pyyaml():
+    assert pyyaml.safe_load(pyml.safe_dump({"s": {"b", "a"}})) == \
+        {"s": {"a", "b"}}
+    assert pyyaml.safe_load(pyml.safe_dump([{"x", 1}])) == [{1, "x"}]
+    assert pyyaml.safe_load(pyml.safe_dump({True})) == {True}
+
+
+def test_frozenset_is_unrepresentable_parity():
+    # PyYAML registers no SafeRepresenter for frozenset: it raises.
+    # Ours used to dump it as a list — the same silent re-shape.
+    with pytest.raises(pyyaml.representer.RepresenterError):
+        pyyaml.safe_dump(frozenset({1}))
+    with pytest.raises(RepresenterError):
+        pyml.safe_dump(frozenset({1}))
+
+
+def test_datetime_time_is_unrepresentable_parity():
+    # PyYAML raises on datetime.time (no representer); ours did too,
+    # via the fall-through — pinned so a future representer change is
+    # a decision, not a drift
+    with pytest.raises(pyyaml.representer.RepresenterError):
+        pyyaml.safe_dump(dt.time(3, 4, 5))
+    with pytest.raises(RepresenterError):
+        pyml.safe_dump(dt.time(3, 4, 5))
+
+
+def test_str_int_subclasses_are_unrepresentable_parity():
+    # PyYAML's representers key on exact type; subclasses raise there
+    # and fall through to the same arm here
+    class MyStr(str):
+        pass
+
+    class MyInt(int):
+        pass
+
+    for value in (MyStr("x"), MyInt(7)):
+        with pytest.raises(pyyaml.representer.RepresenterError):
+            pyyaml.safe_dump(value)
+        with pytest.raises(RepresenterError):
+            pyml.safe_dump(value)
+
+
+# --- the dump kwargs (audit round 7: never a silent `_ignored`) ----------
+
+def test_width_is_accepted_and_block_output_is_width_invariant():
+    # the engine's best_width folds FLOW collections only (13B); the
+    # dump face emits block style, so the output is width-invariant
+    # today — a pinned divergence from PyYAML, whose block plain
+    # scalars fold. The emit-options route (yeptris_serialize_ex) is
+    # the binding's width knob the day flow emission lands.
+    doc = {"text": "word " * 40, "k": list(range(30))}
+    base = pyml.safe_dump(doc)
+    assert pyml.safe_dump(doc, width=20) == base
+    assert pyml.safe_dump(doc, width=80) == base
+    assert pyml.load(pyml.safe_dump(doc, width=20)) == doc
+
+
+def test_width_rejects_non_positive():
+    # the engine maps a non-positive best_width to its default 80 —
+    # a silent surprise PyYAML's width=0-means-infinite callers must
+    # not eat
+    with pytest.raises(ValueError):
+        pyml.safe_dump({"a": 1}, width=0)
+    with pytest.raises(ValueError):
+        pyml.safe_dump({"a": 1}, width=-5)
+
+
+def test_explicit_start_single_document():
+    # the dump_all separator law ('---\n'), not PyYAML's same-line
+    # '--- 1' form — one marker style per binding
+    text = pyml.safe_dump({"a": 1}, explicit_start=True)
+    assert text == "---\na: 1\n"
+    assert pyml.load(text) == {"a": 1}
+    assert pyyaml.safe_load(text) == {"a": 1}
+
+
+def test_dump_all_threads_width():
+    doc = {"text": "word " * 40}
+    base = pyml.safe_dump_all([doc, doc])
+    assert pyml.safe_dump_all([doc, doc], width=20) == base
+
+
+def test_pyyaml_only_dump_kwargs_are_accepted():
+    # indent / default_flow_style ride for call compatibility: the
+    # dump face is block-only and the engine's emit options have no
+    # indent field (carried engine gaps — accepted and documented,
+    # never a silent `_ignored` swallow)
+    assert pyml.safe_dump({"a": 1}, indent=4,
+                          default_flow_style=True) == "a: 1\n"
+    assert pyml.safe_dump_all([{"a": 1}], indent=9) == "a: 1\n"

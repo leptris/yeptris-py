@@ -14,6 +14,7 @@ from ._errors import (  # noqa: F401 — the taxonomy, at package level too
     ReaderError,
     RepresenterError,
     ScannerError,
+    ValidationError,
     YAMLError,
     ParseError,
     YeptrisError,
@@ -42,7 +43,7 @@ except Exception:  # pragma: no cover - metadata always present when installed
 __all__ = [
     "load", "load_all", "dump", "dump_all",
     "YeptrisError", "ParseError",
-    "YAMLError", "MarkedYAMLError",
+    "YAMLError", "MarkedYAMLError", "ValidationError",
     "ReaderError", "ScannerError", "ParserError", "ComposerError",
     "ConstructorError", "RepresenterError", "EmitterError",
     "__version__",

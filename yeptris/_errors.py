@@ -76,3 +76,19 @@ class RepresenterError(YAMLError, TypeError):
 
 class EmitterError(YAMLError):
     """The engine failed while serializing a document (dump side)."""
+
+
+class ValidationError(YAMLError):
+    """Validation failed (the validate face): the input PARSED — this
+    is not a ParseError — but the schema walk produced diagnostics.
+    Carries them as ``.diagnostics`` (a list of
+    ``yeptris.yaml.Diagnostic``): the whole report, never first-fail."""
+
+    def __init__(self, message="", diagnostics=()):
+        super().__init__(message)
+        self.diagnostics = list(diagnostics)
+
+
+# PyYAML carries its ancient misspelling as a compat alias (yaml.error);
+# the same name is aliased here so both spellings import.
+MarkedYAMLFError = MarkedYAMLError
