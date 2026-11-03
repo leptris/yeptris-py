@@ -159,10 +159,10 @@ def test_set_dumps_as_pyyaml_set():
     text = pyml.safe_dump({1, 2})
     assert text == "!!set\n1: null\n2: null\n"
     assert pyyaml.safe_load(text) == {1, 2}
-    # ours has no !!set constructor yet (the columnar drain carries no
-    # tag text, so the route cannot see it — carried engine gap,
-    # pinned, never silent): the tagged mapping arrives as a mapping
-    assert pyml.safe_load(text) == {1: None, 2: None}
+    # the loader side constructs the set now too (issue #166: the
+    # engine's drains carry the collection's tag text) — the dump/load
+    # round-trip holds in our own loader
+    assert pyml.safe_load(text) == {1, 2}
 
 
 def test_sets_inside_collections_roundtrip_through_pyyaml():
@@ -179,6 +179,33 @@ def test_frozenset_is_unrepresentable_parity():
         pyyaml.safe_dump(frozenset({1}))
     with pytest.raises(RepresenterError):
         pyml.safe_dump(frozenset({1}))
+
+
+def test_ordereddict_is_unrepresentable_parity():
+    # PyYAML's SafeDumper has no representer for dict subclasses: an
+    # OrderedDict raises there (only the full yaml.Dumper maps it to
+    # !!omap). Ours used to dump one as a PLAIN sorted map — silently
+    # discarding the order the type exists to carry (issue #166, the
+    # dump-side twin of the omap constructor: !!omap loads as a pairs
+    # LIST, and safe_dump has no OrderedDict form to pair with it).
+    import collections
+
+    od = collections.OrderedDict([("b", 2), ("a", 1)])
+    with pytest.raises(pyyaml.representer.RepresenterError):
+        pyyaml.safe_dump(od)
+    with pytest.raises(RepresenterError):
+        pyml.safe_dump(od)
+
+
+def test_dict_subclasses_are_unrepresentable_parity():
+    # the exact-type law covers every dict subclass, like PyYAML
+    import collections
+
+    for value in (collections.Counter({"a": 1}), collections.defaultdict(int)):
+        with pytest.raises(pyyaml.representer.RepresenterError):
+            pyyaml.safe_dump(value)
+        with pytest.raises(RepresenterError):
+            pyml.safe_dump(value)
 
 
 def test_datetime_time_is_unrepresentable_parity():

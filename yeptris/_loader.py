@@ -217,14 +217,21 @@ def _kind_name(value) -> str:
     return "scalar"
 
 
-def _merge(target: dict, source, line: int = 0, column: int = 0) -> None:
+def _merge(target, source, line: int = 0, column: int = 0, keys_only: bool = False) -> None:
     """'<<' merge: existing keys win; sequences merge in order. The
     merge value MUST be a mapping or a sequence of mappings (PyYAML's
     flatten_mapping) — anything else raises ConstructorError with
     PyYAML's exact problem string. The walks used to disagree here
     (the columns walk dropped a scalar merge value silently, the
-    record walk kept it as a literal '<<' key); both now reject."""
+    record walk kept it as a literal '<<' key); both now reject.
+
+    keys_only: the target is a !!set — PyYAML's flatten_mapping runs
+    for set mappings too, contributing the merge source's KEYS (the
+    values are constructed and discarded by its set.update(mapping))."""
     if isinstance(source, dict):
+        if keys_only:
+            target.update(source)
+            return
         for k, v in source.items():
             target.setdefault(k, v)
     elif isinstance(source, list):
@@ -233,12 +240,36 @@ def _merge(target: dict, source, line: int = 0, column: int = 0) -> None:
                 raise F.ConstructorError(
                     "expected a mapping for merging, but found %s"
                     % _kind_name(item), line, column)
+            if keys_only:
+                target.update(item)
+                continue
             for k, v in item.items():
                 target.setdefault(k, v)
     else:
         raise F.ConstructorError(
             "expected a mapping or list of mappings for merging, but "
             "found %s" % _kind_name(source), line, column)
+
+
+# The collection tags the SafeLoader registers constructors for
+# (yaml/constructor.py): !!set builds a Python set of the mapping's
+# keys, !!omap/!!pairs build a list of pairs. The engine resolves the
+# shorthand to the full URI, so the comparisons are exact-bytes.
+_SET_TAG = b"tag:yaml.org,2002:set"
+_OMAP_TAG = b"tag:yaml.org,2002:omap"
+_PAIRS_TAG = b"tag:yaml.org,2002:pairs"
+
+
+def _coll_mode(tag: bytes):
+    """A collection's explicit tag -> the constructor shape: 'set',
+    'omap' (pairs list), or None for the plain default (and for every
+    unregistered tag, which constructs as the plain shape — the
+    carried unhandled-tag gap)."""
+    if tag == _SET_TAG:
+        return "set"
+    if tag == _OMAP_TAG or tag == _PAIRS_TAG:
+        return "omap"
+    return None
 
 
 # YeptrisValueKind (values.h)
@@ -332,12 +363,58 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
         anchors: dict = {}
         merge_targets: dict = {}
         pending_anchor = None
+        # per open container: 'set' (a !!set — keys only), 'omap' (a
+        # !!omap/!!pairs — the pairs list), 'omap_member' (the
+        # single-pair mapping PyYAML requires per omap entry), None for
+        # the plain shapes
+        modes: list = [None]
 
         def _place(v, tag):
             if stack:
                 parent = stack[-1]
-                if type(parent) is list:
-                    parent.append(v)
+                pt = type(parent)
+                if pt is list:
+                    if modes[-1] == "omap":
+                        # a member placed directly (a scalar, or an
+                        # alias to one): PyYAML's construct_yaml_omap
+                        # requires a mapping per entry. An aliased
+                        # single-pair mapping contributes its pair.
+                        if type(v) is dict:
+                            if len(v) != 1:
+                                raise F.ConstructorError(
+                                    "while constructing an ordered map: "
+                                    "expected a single mapping item, but "
+                                    "found %d items" % len(v))
+                            parent.append(next(iter(v.items())))
+                        else:
+                            raise F.ConstructorError(
+                                "while constructing an ordered map: "
+                                "expected a mapping of length 1, but "
+                                "found %s" % _kind_name(v))
+                    else:
+                        parent.append(v)
+                elif pt is set:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = tag
+                    else:
+                        pending_key[-1] = None
+                        # PyYAML's construct_yaml_set builds the full
+                        # mapping then updates the set with its KEYS —
+                        # the values are constructed and discarded
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
+                            if type(v) in (dict, list) and not v:
+                                merge_targets[id(v)] = parent
+                            else:
+                                _merge(parent, v, keys_only=True)
+                        else:
+                            try:
+                                parent.add(key)
+                            except TypeError:
+                                raise F.ConstructorError(
+                                    "while constructing a set: found "
+                                    "unhashable key %r" % (key,)) from None
                 else:
                     key = pending_key[-1]
                     if key is None:
@@ -364,7 +441,9 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                     and pending_anchor is None and stack
                     and type(stack[-1]) is dict):
                 # the dominant shape: a str:str pair in a map — place
-                # both directly (same conversions as the STR arm)
+                # both directly (same conversions as the STR arm). The
+                # omap member count rides the close (len(members)),
+                # so this path stays byte-identical to pristine.
                 o, l = offs[i], lens[i]
                 key = arena[o:o + l].decode("utf-8")
                 o2, l2 = offs[i + 1], lens[i + 1]
@@ -407,21 +486,81 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                     pending_anchor = None
                 _place(v, tags[i])
             elif kind == _V_MAP or kind == _V_SEQ:
-                fresh = {} if kind == _V_MAP else []
+                # the engine surfaces the collection's explicit tag on
+                # the open's span (off/len; 0/0 when untagged — old
+                # libraries included, so this degrades to the plain
+                # shapes there). The common untagged case pays no
+                # slice and no call.
+                tl = lens[i]
+                mode = _coll_mode(arena[offs[i]:offs[i] + tl]) if tl else None
+                if mode == "set":
+                    if kind != _V_MAP:
+                        # construct_yaml_set routes through
+                        # construct_mapping: a sequence node is the
+                        # constructor error
+                        raise F.ConstructorError(
+                            "while constructing a set: expected a mapping "
+                            "node, but found sequence")
+                    fresh = set()
+                elif mode == "omap":
+                    if kind != _V_SEQ:
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected a "
+                            "sequence, but found mapping")
+                    fresh = []
+                else:
+                    fresh = {} if kind == _V_MAP else []
                 if pending_anchor is not None:
                     anchors[pending_anchor] = fresh
                     pending_anchor = None
-                _place(fresh, F.TAG_STR)
+                parent_is_omap = bool(stack) and modes[-1] == "omap"
+                if parent_is_omap:
+                    # every omap member is a mapping of length 1; its
+                    # own tag is ignored — PyYAML iterates the member's
+                    # composed pairs. The pairs tuple lands at close.
+                    if kind != _V_MAP:
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected a "
+                            "mapping of length 1, but found sequence")
+                else:
+                    _place(fresh, F.TAG_STR)
                 stack.append(fresh)
+                modes.append("omap_member" if parent_is_omap else mode)
                 pending_key.append(None)
                 pending_tag.append(None)
             elif kind == _V_CLOSE:
+                key_tag = pending_tag[-1]  # the last key this frame placed
                 closed = stack.pop()
                 pending_key.pop()
                 pending_tag.pop()
+                mode = modes.pop()
+                if mode == "omap_member":
+                    # PyYAML checks len(subnode.value) == 1 on the
+                    # composed member (so the count dominates), then
+                    # constructs the pair's KEY — a sole PLAIN '<<'
+                    # pair (literal, or left empty by a deferred empty
+                    # merge value) has no constructor there: the omap
+                    # path never flattens merges
+                    if len(closed) > 1:
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected a "
+                            "single mapping item, but found %d items"
+                            % len(closed))
+                    if key_tag == F.TAG_MERGE:
+                        raise F.ConstructorError(
+                            "could not determine a constructor for the tag "
+                            "'tag:yaml.org,2002:merge'")
+                    if len(closed) != 1:
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected a "
+                            "single mapping item, but found 0 items")
+                    stack[-1].append(next(iter(closed.items())))
                 target = merge_targets.pop(id(closed), None)
                 if target is not None:
-                    _merge(target, closed)
+                    if type(target) is set:
+                        _merge(target, closed, keys_only=True)
+                    else:
+                        _merge(target, closed)
             elif kind == _V_DOC:
                 # anchors are per-document (PyYAML's composer resets
                 # per document): a later document's alias must not
@@ -466,6 +605,11 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
     pending_tag: list = [None]   # the key's tag_id (merge is tag-driven)
     anchors: dict = {}
     merge_targets: dict = {}     # id(fresh container) -> dict to merge into
+    # the !!set/!!omap constructor shapes, per open container (the
+    # columns walk is the lockstep twin); mmarks keeps each omap
+    # member's start mark for the shape errors
+    modes: list = [None]
+    mmarks: list = [(0, 0)]
 
     # hot loop: C-level record iteration with the placement logic
     # inlined (this walk is the bulk of load time; a function call
@@ -482,8 +626,38 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 anchors[arena[rec[10]:rec[10] + a_len]] = v
             if stack:
                 parent = stack[-1]
-                if type(parent) is list:
+                ptype = type(parent)
+                if ptype is list:
+                    if modes[-1] == "omap":
+                        # a scalar member placed directly in an omap:
+                        # PyYAML requires a mapping of length 1 per entry
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected "
+                            "a mapping of length 1, but found scalar",
+                            rec[4], rec[5])
                     parent.append(v)
+                elif ptype is set:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = tag_id
+                    else:
+                        pending_key[-1] = None
+                        # the set gets the KEYS (construct_yaml_set's
+                        # data.update(mapping) discards the values)
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
+                            if type(v) in (dict, list) and not v:
+                                merge_targets[id(v)] = parent
+                            else:
+                                _merge(parent, v, rec[4], rec[5], keys_only=True)
+                        else:
+                            try:
+                                parent.add(key)
+                            except TypeError:
+                                raise F.ConstructorError(
+                                    "while constructing a set: found "
+                                    "unhashable key %r" % (key,),
+                                    rec[4], rec[5]) from None
                 else:
                     key = pending_key[-1]
                     if key is None:
@@ -505,14 +679,61 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             else:
                 docs[-1] = v
         elif etype == F.MAPPING_START or etype == F.SEQUENCE_START:
-            fresh = {} if etype == F.MAPPING_START else []
+            # the collection's explicit tag text rides the record's
+            # tag_off/tag_len (arena slice; 0/0 when untagged). The
+            # common untagged case pays no slice.
+            t_len = rec[13]
+            mode = _coll_mode(arena[rec[12]:rec[12] + t_len]) if t_len else None
+            if mode == "set":
+                if etype != F.MAPPING_START:
+                    # construct_yaml_set routes through construct_mapping
+                    raise F.ConstructorError(
+                        "while constructing a set: expected a mapping node, "
+                        "but found sequence", rec[4], rec[5])
+                fresh = set()
+            elif mode == "omap":
+                if etype != F.SEQUENCE_START:
+                    raise F.ConstructorError(
+                        "while constructing an ordered map: expected a "
+                        "sequence, but found mapping", rec[4], rec[5])
+                fresh = []
+            else:
+                fresh = {} if etype == F.MAPPING_START else []
             a_len = rec[11]
             if a_len:
                 anchors[arena[rec[10]:rec[10] + a_len]] = fresh
-            if stack:
+            parent_is_omap = bool(stack) and modes[-1] == "omap"
+            if parent_is_omap:
+                # every omap member is a mapping of length 1 (PyYAML
+                # checks the node kind; the member's own tag is
+                # ignored — its composed pairs are what constructs)
+                if etype != F.MAPPING_START:
+                    raise F.ConstructorError(
+                        "while constructing an ordered map: expected a "
+                        "mapping of length 1, but found sequence",
+                        rec[4], rec[5])
+            elif stack:
                 parent = stack[-1]
-                if type(parent) is list:
+                ptype = type(parent)
+                if ptype is list:
                     parent.append(fresh)
+                elif ptype is set:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = fresh
+                        pending_tag[-1] = F.TAG_STR
+                    else:
+                        pending_key[-1] = None
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE and not fresh:
+                            merge_targets[id(fresh)] = parent
+                        else:
+                            try:
+                                parent.add(key)
+                            except TypeError:
+                                raise F.ConstructorError(
+                                    "while constructing a set: found "
+                                    "unhashable key %r" % (key,),
+                                    rec[4], rec[5]) from None
                 else:
                     key = pending_key[-1]
                     if key is None:
@@ -527,15 +748,43 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             else:
                 docs[-1] = fresh
             stack.append(fresh)
+            modes.append("omap_member" if parent_is_omap else mode)
+            mmarks.append((rec[4], rec[5]))
             pending_key.append(None)
             pending_tag.append(None)
         elif etype == F.MAPPING_END or etype == F.SEQUENCE_END:
+            key_tag = pending_tag[-1]  # the last key this frame placed
             closed = stack.pop()
             pending_key.pop()
             pending_tag.pop()
+            mode = modes.pop()
+            mark = mmarks.pop()
+            if mode == "omap_member":
+                # PyYAML checks len(subnode.value) == 1 on the composed
+                # member (so the count dominates), then constructs the
+                # pair's KEY — a sole PLAIN '<<' pair (literal, or left
+                # empty by a deferred empty merge value) has no
+                # constructor there: the omap path never flattens merges
+                if len(closed) > 1:
+                    raise F.ConstructorError(
+                        "while constructing an ordered map: expected a "
+                        "single mapping item, but found %d items"
+                        % len(closed), *mark)
+                if key_tag == F.TAG_MERGE:
+                    raise F.ConstructorError(
+                        "could not determine a constructor for the tag "
+                        "'tag:yaml.org,2002:merge'", *mark)
+                if len(closed) != 1:
+                    raise F.ConstructorError(
+                        "while constructing an ordered map: expected a "
+                        "single mapping item, but found 0 items", *mark)
+                stack[-1].append(next(iter(closed.items())))
             target = merge_targets.pop(id(closed), None)
             if target is not None:
-                _merge(target, closed)
+                if type(target) is set:
+                    _merge(target, closed, keys_only=True)
+                else:
+                    _merge(target, closed)
         elif etype == F.DOCUMENT_START:
             # anchors are per-document (PyYAML's composer resets per
             # document): a later document's alias must not resolve
@@ -556,8 +805,43 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             v = anchors[name]
             if stack:
                 parent = stack[-1]
-                if type(parent) is list:
-                    parent.append(v)
+                ptype = type(parent)
+                if ptype is list:
+                    if modes[-1] == "omap":
+                        # an aliased member: the anchored value must be
+                        # a single-pair mapping whose pair becomes the
+                        # entry (PyYAML resolves the alias node first)
+                        if type(v) is dict:
+                            if len(v) != 1:
+                                raise F.ConstructorError(
+                                    "while constructing an ordered map: "
+                                    "expected a single mapping item, but "
+                                    "found %d items" % len(v), rec[4], rec[5])
+                            parent.append(next(iter(v.items())))
+                        else:
+                            raise F.ConstructorError(
+                                "while constructing an ordered map: "
+                                "expected a mapping of length 1, but "
+                                "found %s" % _kind_name(v), rec[4], rec[5])
+                    else:
+                        parent.append(v)
+                elif ptype is set:
+                    key = pending_key[-1]
+                    if key is None:
+                        pending_key[-1] = v
+                        pending_tag[-1] = F.TAG_STR
+                    else:
+                        pending_key[-1] = None
+                        if key == "<<" and pending_tag[-1] == F.TAG_MERGE:
+                            _merge(parent, v, rec[4], rec[5], keys_only=True)
+                        else:
+                            try:
+                                parent.add(key)
+                            except TypeError:
+                                raise F.ConstructorError(
+                                    "while constructing a set: found "
+                                    "unhashable key %r" % (key,),
+                                    rec[4], rec[5]) from None
                 else:
                     key = pending_key[-1]
                     if key is None:
