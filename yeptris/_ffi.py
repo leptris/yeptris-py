@@ -362,6 +362,52 @@ except AttributeError:
         libc_free = ctypes.CDLL("ucrtbase.dll").free
 libc_free.argtypes = [ctypes.c_void_p]
 
+# The tolerant per-document stream iterator (parse.h, engine #921) and
+# its framing accessors (slice + buffer, the engine's slice release):
+# hosts carrying their own value route re-parse each frame's bytes
+# through the drain — one typing SSOT, zero DOM walk. Feature-detected
+# (the validate pattern): each_document imports only on engines with
+# BOTH symbol sets; the binding faces skip on older vendored libraries.
+class _ParseOptions(ctypes.Structure):
+    # parse.h YeptrisParseOptions: ABI-frozen field order (the Ruby
+    # binding carries the same layout)
+    _fields_ = [("schema", ctypes.c_int), ("max_depth", ctypes.c_int),
+                ("strict", ctypes.c_int), ("tab_policy", ctypes.c_int),
+                ("recover", ctypes.c_int)]
+
+
+STREAM_ITER_AVAILABLE = False
+try:
+    _lib.yeptris_stream_iter_new.argtypes = [ctypes.c_char_p, _sz,
+                                             ctypes.POINTER(_ParseOptions)]
+    _lib.yeptris_stream_iter_new.restype = _p
+    _lib.yeptris_stream_iter_next.argtypes = [_p, ctypes.POINTER(_p),
+                                              ctypes.POINTER(_sz)]
+    _lib.yeptris_stream_iter_next.restype = ctypes.c_int
+    _lib.yeptris_stream_iter_status.argtypes = [
+        _p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+    _lib.yeptris_stream_iter_status.restype = ctypes.c_int
+    _lib.yeptris_stream_iter_free.argtypes = [_p]
+    STREAM_ITER_AVAILABLE = True
+except AttributeError:
+    pass
+
+# POINTER(c_char), not c_char_p: the buffer out-param must stay an
+# address (a c_char_p restype hands back an immutable bytes snapshot —
+# there would be nothing to offset the slice against)
+STREAM_FRAMES_AVAILABLE = False
+try:
+    _lib.yeptris_stream_iter_slice.argtypes = [_p, ctypes.POINTER(_sz),
+                                               ctypes.POINTER(_sz)]
+    _lib.yeptris_stream_iter_slice.restype = ctypes.c_int
+    _lib.yeptris_stream_iter_buffer.argtypes = [
+        _p, ctypes.POINTER(ctypes.POINTER(ctypes.c_char)),
+        ctypes.POINTER(_sz)]
+    _lib.yeptris_stream_iter_buffer.restype = ctypes.c_int
+    STREAM_FRAMES_AVAILABLE = True
+except AttributeError:
+    pass
+
 
 def last_error():
     line = ctypes.c_uint32(0)

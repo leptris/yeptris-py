@@ -11,6 +11,7 @@ is a literal key).
 
 from __future__ import annotations
 
+import ctypes
 import datetime as _dt
 import io
 import struct
@@ -26,6 +27,9 @@ _BOOL_FALSE = {"no", "false", "off"}
 _INT_DEC = re.compile(r"^[-+]?(0|[1-9][0-9_]*)$")
 _INT_HEX = re.compile(r"^[-+]?0x[0-9a-fA-F_]+$")
 _INT_OCT = re.compile(r"^[-+]?0[0-7_]+$")
+# the 1.2 core resolver's octal (0o7): the engine tags it int under
+# SCHEMA_12_CORE; the compat surface never sees the 0o shape
+_INT_OCT_12 = re.compile(r"^[-+]?0o[0-7]+$")
 _INT_BIN = re.compile(r"^[-+]?0b[01_]+$")
 _INT_SEXAGESIMAL = re.compile(r"^[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+$")
 
@@ -60,6 +64,8 @@ def _to_int(text: str):
         return int(text.replace("_", ""), 10)
     if _INT_HEX.match(text):
         return int(text.replace("_", ""), 16)
+    if _INT_OCT_12.match(text):
+        return int(text.replace("_", ""), 8)
     if _INT_OCT.match(text):
         return int(text.replace("_", ""), 8)
     if _INT_BIN.match(text):
@@ -891,3 +897,69 @@ def load(yaml, schema: int = F.SCHEMA_11_COMPAT):
     """The first document of the stream, or None when empty."""
     docs = _load_all_fast(yaml, schema)
     return docs[0] if docs else None
+
+
+def each_document(yaml, schema: int = F.SCHEMA_11_COMPAT, max_depth: int = 0):
+    """The tolerant per-document walk (engine #921, py#168): yields
+    (document, None) for every valid document and (None, error) for
+    every failed one — in stream order, LAZY (nothing parses until
+    iteration starts, the load_all law). A parse-class failure yields
+    its error carrying the failed document's OWN line/column and its
+    stream index, and the walk CONTINUES at the next line-start marker
+    — the valid documents after a bad one are kept. The stream-fatal
+    classes (memory/encoding) yield their error and end the walk; an
+    unrecoverable tail ends it. Each frame materializes through the
+    same drain as load_all (the engine's slice accessor): one typing
+    SSOT, zero divergence."""
+    if not (F.STREAM_ITER_AVAILABLE and F.STREAM_FRAMES_AVAILABLE):
+        raise ImportError(
+            "each_document requires libyeptris with the stream "
+            "iterator's slice accessor (the engine's slice release); "
+            "set YEPTRIS_LIB_PATH to a newer build")
+    data = _as_bytes(yaml)
+    opts = F._ParseOptions(schema=schema, max_depth=max_depth)
+    it = F._lib.yeptris_stream_iter_new(data, len(data), ctypes.byref(opts))
+    if not it:
+        raise F.ParseError("stream iterator alloc failed", 0, 0)
+    doc_p = F._p()
+    idx = ctypes.c_size_t(0)
+    off = ctypes.c_size_t(0)
+    ln = ctypes.c_size_t(0)
+    line = ctypes.c_uint32(0)
+    col = ctypes.c_uint32(0)
+    buf_p = ctypes.pointer(ctypes.c_char(b"\0"))
+    buf_len = ctypes.c_size_t(0)
+    try:
+        while True:
+            st = F._lib.yeptris_stream_iter_next(it, ctypes.byref(doc_p),
+                                                 ctypes.byref(idx))
+            if st == F.OK and not doc_p.value:
+                return  # the stream is over
+            if st == F.OK:
+                if F._lib.yeptris_stream_iter_slice(
+                        it, ctypes.byref(off), ctypes.byref(ln)) != F.OK:
+                    raise F.ParseError("stream iterator lost the frame", 0, 0)
+                if F._lib.yeptris_stream_iter_buffer(
+                        it, ctypes.byref(buf_p), ctypes.byref(buf_len)) != F.OK:
+                    raise F.ParseError("stream iterator lost its buffer", 0, 0)
+                addr = ctypes.addressof(buf_p.contents) + off.value
+                frame = ctypes.string_at(addr, ln.value)
+                # the frame is exactly one document; a bare marker
+                # yields [None] — the (None, None) pair, like stdlib
+                docs = _load_all_fast(frame, schema)
+                yield (docs[0], None)
+            else:
+                F._lib.yeptris_stream_iter_status(
+                    it, ctypes.byref(line), ctypes.byref(col))
+                reason = ("depth limit exceeded" if st == F.ERROR_DEPTH
+                          else "parse error")
+                # ParserError renders "in line X, column Y" itself —
+                # the message carries only the stream position
+                err = F.ParserError(
+                    "stream document %d: %s" % (idx.value, reason),
+                    line.value, col.value)
+                yield (None, err)
+                if st in (F.ERROR_MEMORY, F.ERROR_ENCODING):
+                    return  # stream-fatal: the iterator is done
+    finally:
+        F._lib.yeptris_stream_iter_free(it)
