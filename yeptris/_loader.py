@@ -493,6 +493,18 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 # slice and no call.
                 tl = lens[i]
                 mode = _coll_mode(arena[offs[i]:offs[i] + tl]) if tl else None
+                parent_is_omap = bool(stack) and modes[-1] == "omap"
+                if parent_is_omap:
+                    # every omap member is a mapping of length 1; its
+                    # own tag is ignored — PyYAML iterates the member's
+                    # composed pairs (a !!set-tagged member contributes
+                    # the pairs, not a set). The pairs tuple lands at
+                    # close.
+                    if kind != _V_MAP:
+                        raise F.ConstructorError(
+                            "while constructing an ordered map: expected a "
+                            "mapping of length 1, but found sequence")
+                    mode = None
                 if mode == "set":
                     if kind != _V_MAP:
                         # construct_yaml_set routes through
@@ -513,16 +525,7 @@ def load_all_columns(yaml, schema: int = F.SCHEMA_11_COMPAT):
                 if pending_anchor is not None:
                     anchors[pending_anchor] = fresh
                     pending_anchor = None
-                parent_is_omap = bool(stack) and modes[-1] == "omap"
-                if parent_is_omap:
-                    # every omap member is a mapping of length 1; its
-                    # own tag is ignored — PyYAML iterates the member's
-                    # composed pairs. The pairs tuple lands at close.
-                    if kind != _V_MAP:
-                        raise F.ConstructorError(
-                            "while constructing an ordered map: expected a "
-                            "mapping of length 1, but found sequence")
-                else:
+                if not parent_is_omap:
                     _place(fresh, F.TAG_STR)
                 stack.append(fresh)
                 modes.append("omap_member" if parent_is_omap else mode)
@@ -684,6 +687,19 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             # common untagged case pays no slice.
             t_len = rec[13]
             mode = _coll_mode(arena[rec[12]:rec[12] + t_len]) if t_len else None
+            parent_is_omap = bool(stack) and modes[-1] == "omap"
+            if parent_is_omap:
+                # every omap member is a mapping of length 1 (PyYAML
+                # checks the node kind; the member's own tag is
+                # ignored — its composed pairs are what constructs, so
+                # a !!set-tagged member contributes the pairs, not a
+                # set)
+                if etype != F.MAPPING_START:
+                    raise F.ConstructorError(
+                        "while constructing an ordered map: expected a "
+                        "mapping of length 1, but found sequence",
+                        rec[4], rec[5])
+                mode = None
             if mode == "set":
                 if etype != F.MAPPING_START:
                     # construct_yaml_set routes through construct_mapping
@@ -702,16 +718,8 @@ def load_all(yaml, schema: int = F.SCHEMA_11_COMPAT):
             a_len = rec[11]
             if a_len:
                 anchors[arena[rec[10]:rec[10] + a_len]] = fresh
-            parent_is_omap = bool(stack) and modes[-1] == "omap"
             if parent_is_omap:
-                # every omap member is a mapping of length 1 (PyYAML
-                # checks the node kind; the member's own tag is
-                # ignored — its composed pairs are what constructs)
-                if etype != F.MAPPING_START:
-                    raise F.ConstructorError(
-                        "while constructing an ordered map: expected a "
-                        "mapping of length 1, but found sequence",
-                        rec[4], rec[5])
+                pass  # the member's pair tuple lands in the parent at close
             elif stack:
                 parent = stack[-1]
                 ptype = type(parent)
