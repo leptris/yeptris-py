@@ -58,10 +58,11 @@ from .._validate import (  # noqa: F401 — the validation face
     is_valid,
     validate,
 )
+from .._loader import each_document as _each_document
 
 __all__ = [
     "safe_load", "safe_load_all", "safe_dump", "safe_dump_all",
-    "load", "load_all", "dump", "dump_all",
+    "load", "load_all", "dump", "dump_all", "each_document",
     "YAMLError", "MarkedYAMLError", "MarkedYAMLFError",
     "ReaderError", "ScannerError", "ParserError", "ComposerError",
     "ConstructorError", "RepresenterError", "EmitterError",
@@ -125,6 +126,24 @@ def safe_load_all(stream, *, json_schema=None, validate=False):
     if diags:
         raise _validation_error(diags)
     yield from _load_all(data)
+
+
+def each_document(stream, *, schema=_F.SCHEMA_11_COMPAT, max_depth=0):
+    """The tolerant per-document walk (py#168): a lazy generator of
+    (document, error) pairs in stream order — (document, None) for
+    every valid document, (None, error) for every failed one. A
+    parse-class failure's error carries the failed document's OWN
+    line/column and its stream index, and the walk CONTINUES at the
+    next line-start marker (the valid documents after a bad one are
+    kept — load_all/safe_load_all raise instead and lose the stream).
+    The stream-fatal classes (memory/encoding) yield their error and
+    end the walk. `schema` is the resolve-schema id
+    (F.SCHEMA_11_COMPAT default, F.SCHEMA_12_CORE for the 1.2 core
+    resolver) and rides every frame; `max_depth` bounds nesting per
+    frame. Frames materialize through the same drain as load_all: one
+    typing SSOT. Requires an engine with the stream iterator's slice
+    accessor; ImportError on older libraries."""
+    yield from _each_document(stream, schema=schema, max_depth=max_depth)
 
 
 def safe_dump(data, stream=None, *, sort_keys=True, width=None, indent=None,

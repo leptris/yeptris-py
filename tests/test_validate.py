@@ -74,7 +74,10 @@ def test_the_whole_report_enumerates_every_miss():
 
 def test_multi_document_stream_validates_every_document():
     diags = validate(b"name: a\n---\nage: 1\n", json_schema=SCHEMA)
-    assert [(d.keyword, d.path) for d in diags] == [("required", ["name"])]
+    # the streaming-attribution law (engine #898): a multi-doc stream
+    # addresses diagnostics as /<doc>/path (0-based doc index) — the
+    # miss lives in document 1
+    assert [(d.keyword, d.path) for d in diags] == [("required", ["1", "name"])]
     assert diags[0].line == 3  # the mark points into document 2
 
 
@@ -164,7 +167,11 @@ def test_valid_core_document_answers_zero_diagnostics():
 
 
 def test_json_family_walk_rejects_non_json_productions():
-    diags = validate(b"a: yes\n", schema=F.SCHEMA_12_JSON)
+    # the example-10.8 law (engine #908): implicit no-production plains
+    # are STRINGS in the 12_JSON family — `a: yes` validates clean; the
+    # diagnostic fires on EXPLICIT non-JSON tags.
+    assert not validate(b"a: yes\n", schema=F.SCHEMA_12_JSON)
+    diags = validate(b"a: !foo 1\n", schema=F.SCHEMA_12_JSON)
     assert any(d.keyword == "jsonType" and d.path == ["a"] for d in diags)
 
 
@@ -174,8 +181,10 @@ def test_json_family_walk_requires_string_keys():
     assert d.code == 2  # YEPTRIS_DIAG_KEY_NOT_STRING
     assert d.path == []
     assert d.message == "mapping key is int (expected a string)"
-    # the same int key is also a non-JSON plain scalar at its path
-    assert any(x.keyword == "jsonType" and x.path == ["1"] for x in diags)
+    # the int key resolves as an int (a JSON production): no jsonType
+    # miss rides — example 10.8 keeps implicit no-production plains
+    # strings, and this key is NOT one
+    assert not any(x.keyword == "jsonType" for x in diags)
 
 
 # --- the load() keyword forms ---------------------------------------------
