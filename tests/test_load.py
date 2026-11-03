@@ -302,7 +302,21 @@ SET_OMAP_CASES = [
      {"outer": {"a"}, "inner": [("x", 1)]}),
     ("!!omap [&m {x: 1}, *m]", [("x", 1), ("x", 1)]),
     ("k: &s !!set {p}\nj: *s", {"k": {"p"}, "j": {"p"}}),
+    # a set-tagged OMAP MEMBER contributes its pairs, not a set (the
+    # member's own tag is ignored on the omap path, like PyYAML's
+    # pair iteration)
+    ("!!omap [!!set {a}]", [("a", None)]),
+    ("!!omap [!!set {a: 1}]", [("a", 1)]),
+    # safe_load takes the FIRST document; the full stream below
+    ("!!set {a}\n---\n!!set {b}", {"a"}),
 ]
+
+
+def test_set_multidoc_both_walks_agree():
+    text = "!!set {a}\n---\n!!set {b}\n"
+    assert list(pyml.safe_load_all(text)) == [{"a"}, {"b"}]
+    assert yeptris._loader.load_all(text) == [{"a"}, {"b"}]
+    assert list(pyyaml.safe_load_all(text)) == [{"a"}, {"b"}]
 
 
 @pytest.mark.parametrize("text,expected", SET_OMAP_CASES)
