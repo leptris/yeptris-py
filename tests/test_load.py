@@ -8,7 +8,7 @@ import pytest
 import yaml as pyyaml
 
 import yeptris
-from yeptris import ParseError
+from yeptris import ConstructorError, ParseError
 from yeptris import yaml as pyml
 
 
@@ -168,3 +168,144 @@ def test_undefined_alias_composer_parity():
     # a forward reference rejects too
     with pytest.raises(ParseError):
         pyml.safe_load("[*a, &a 1]")
+
+
+# --- PyYAML constructor parity: !!set / !!omap (issue #166) --------------
+# The engine's drains surface the collection's explicit tag text, so the
+# constructor can re-tag containers the way SafeLoader's registered
+# constructors do: !!set builds a Python set of the mapping's keys,
+# !!omap/!!pairs build a LIST OF PAIRS (PyYAML 6 constructs pairs, not
+# an OrderedDict — its SafeDumper has no OrderedDict representer either).
+
+def test_set_loads_as_a_set():
+    assert pyml.safe_load("!!set {a, b, c}") == {"a", "b", "c"}
+    assert pyml.safe_load("!!set\n? a\n? b") == {"a", "b"}
+    assert pyml.safe_load("!!set {}") == set()
+    assert pyml.safe_load("!!set {1, 2}") == {1, 2}
+    assert pyml.safe_load("!!set {a: x, b: y}") == {"a", "b"}  # values discarded
+    assert pyyaml.safe_load("!!set {a: x, b: y}") == {"a", "b"}
+
+
+def test_set_roundtrip():
+    # yaml.dump({1,2}) -> yaml.load -> the same set (was: a list)
+    for value in ({"a", "b"}, {1, 2}, set()):
+        assert pyml.safe_load(pyml.safe_dump(value)) == value
+
+
+def test_set_nested_and_aliased():
+    assert pyml.safe_load(pyml.safe_dump({"s": {"b", "a"}})) == {"s": {"a", "b"}}
+    doc = pyml.safe_load("k: &s !!set {p}\nj: *s\n")
+    assert doc == {"k": {"p"}, "j": {"p"}}
+    assert doc["k"] is doc["j"]
+
+
+def test_set_merge_keys_flatten():
+    # PyYAML's construct_mapping flattens merges for set mappings too:
+    # the merge source contributes its KEYS
+    assert pyml.safe_load("!!set {<<: {m: 1}, b: 2}") == {"m", "b"}
+    assert pyyaml.safe_load("!!set {<<: {m: 1}, b: 2}") == {"m", "b"}
+
+
+def test_set_on_a_sequence_is_a_constructor_error_parity():
+    # construct_yaml_set routes through construct_mapping: a sequence
+    # node is the constructor error, in both implementations
+    for text in ("!!set [a, b]", "!!set []"):
+        with pytest.raises(pyyaml.constructor.ConstructorError):
+            pyyaml.safe_load(text)
+        with pytest.raises(ConstructorError):
+            pyml.safe_load(text)
+        with pytest.raises(ConstructorError):
+            yeptris._loader.load_all(text)  # the record walk matches
+
+
+def test_set_unhashable_key_is_a_constructor_error_parity():
+    with pytest.raises(pyyaml.constructor.ConstructorError):
+        pyyaml.safe_load("!!set {[], x}")
+    with pytest.raises(ConstructorError):
+        pyml.safe_load("!!set {[], x}")
+
+
+def test_omap_loads_as_pairs():
+    assert pyml.safe_load("!!omap [a: 1, b: 2]") == [("a", 1), ("b", 2)]
+    assert pyml.safe_load("!!omap\n- a: 1\n- b: 2") == [("a", 1), ("b", 2)]
+    assert pyml.safe_load("!!pairs [a: 1]") == [("a", 1)]
+    # !!pairs shares the constructor; !!omap must NOT read as an
+    # OrderedDict (PyYAML 6 builds a pairs list — pinned divergence
+    # from the issue text's OrderedDict expectation)
+    assert not isinstance(pyml.safe_load("!!omap [a: 1]"), dict)
+    assert pyyaml.safe_load("!!omap [a: 1]") == [("a", 1)]
+
+
+def test_omap_member_shape_errors_parity():
+    # every member must be a mapping of length 1 (compose-time in
+    # PyYAML, placement-time here — same rejections, same problem
+    # strings)
+    for text, fragment in (
+        ("!!omap [a]", "expected a mapping of length 1, but found scalar"),
+        ("!!omap [[a]]", "expected a mapping of length 1, but found sequence"),
+        ("!!omap [{}]", "expected a single mapping item, but found 0 items"),
+        ("!!omap [{a: 1, b: 2}]", "expected a single mapping item, but found 2 items"),
+        ("!!omap {a: 1}", "expected a sequence, but found mapping"),
+    ):
+        with pytest.raises(pyyaml.constructor.ConstructorError):
+            pyyaml.safe_load(text)
+        with pytest.raises(ConstructorError) as ei:
+            pyml.safe_load(text)
+        assert fragment in str(ei.value), text
+        with pytest.raises(ConstructorError):
+            yeptris._loader.load_all(text)  # the record walk matches
+
+
+def test_omap_aliased_member_pair_extraction():
+    # PyYAML resolves the alias node first: a single-pair anchor
+    # contributes its pair twice
+    text = "!!omap [&m {x: 1}, *m]"
+    ours = pyml.safe_load(text)
+    theirs = pyyaml.safe_load(text)
+    assert ours == theirs == [("x", 1), ("x", 1)]
+    with pytest.raises(ConstructorError):
+        pyml.safe_load("!!omap [&m {x: 1, y: 2}, *m]")
+    with pytest.raises(pyyaml.constructor.ConstructorError):
+        pyyaml.safe_load("!!omap [&m {x: 1, y: 2}, *m]")
+
+
+def test_omap_merge_key_is_not_flattened_parity():
+    # the omap path iterates the composed pairs directly — merges do
+    # not flatten there (a sole merge pair has no constructor)
+    with pytest.raises(ConstructorError) as ei:
+        pyml.safe_load("!!omap [{<<: {z: 1}, b: 2}]")
+    assert "found 2 items" in str(ei.value)
+    with pytest.raises(pyyaml.constructor.ConstructorError):
+        pyyaml.safe_load("!!omap [{<<: {z: 1}, b: 2}]")
+    with pytest.raises(ConstructorError) as ei:
+        pyml.safe_load("!!omap [{<<: {z: 9}}]")
+    assert "could not determine a constructor for the tag " \
+        "'tag:yaml.org,2002:merge'" in str(ei.value)
+    with pytest.raises(pyyaml.constructor.ConstructorError):
+        pyyaml.safe_load("!!omap [{<<: {z: 9}}]")
+
+
+SET_OMAP_CASES = [
+    # (yaml, expected) — the columns walk and the record walk must
+    # construct the same values (the lockstep law)
+    ("!!set {a, b, c}", {"a", "b", "c"}),
+    ("!!set\n? a\n? b", {"a", "b"}),
+    ("!!set {}", set()),
+    ("!!set {1, 2}", {1, 2}),
+    ("!!set {a: x, b: y}", {"a", "b"}),
+    ("!!set {<<: {m: 1}, b: 2}", {"m", "b"}),
+    ("a: !!set {q}\nb: [!!set {r}]", {"a": {"q"}, "b": [{"r"}]}),
+    ("!!omap [a: 1, b: 2]", [("a", 1), ("b", 2)]),
+    ("!!omap\n- a: 1\n- b: 2", [("a", 1), ("b", 2)]),
+    ("!!pairs [a: 1]", [("a", 1)]),
+    ("outer: !!set {a}\ninner: !!omap [x: 1]",
+     {"outer": {"a"}, "inner": [("x", 1)]}),
+    ("!!omap [&m {x: 1}, *m]", [("x", 1), ("x", 1)]),
+    ("k: &s !!set {p}\nj: *s", {"k": {"p"}, "j": {"p"}}),
+]
+
+
+@pytest.mark.parametrize("text,expected", SET_OMAP_CASES)
+def test_set_omap_both_walks_agree(text, expected):
+    assert pyml.safe_load(text) == expected
+    assert yeptris._loader.load_all(text)[0] == expected

@@ -148,6 +148,17 @@ def _entries(value, emit, blob, depth, sort_keys, quote_strings=False):
         emit(F.BUILD_SCALAR, F.STYLE_PLAIN, len(blob), len(buf))
         blob += buf
     elif isinstance(value, dict):
+        if type(value) is not dict:
+            # PyYAML's representers key on EXACT type, and SafeDumper
+            # registers none for dict subclasses: an OrderedDict (or
+            # Counter, or defaultdict) hits represent_undefined and
+            # raises. The old isinstance arm dumped one as a PLAIN
+            # sorted map — silently discarding the very order the type
+            # exists to carry, the same silent re-shape py#165 fixed
+            # for sets. (PyYAML's full Dumper maps OrderedDict to
+            # !!omap; the safe surface has no such representer.)
+            raise F.RepresenterError(
+                f"cannot dump {type(value).__name__!r} safely")
         emit(F.BUILD_MAP, 0, 0, 0)
         items = list(value.items())
         if sort_keys:
