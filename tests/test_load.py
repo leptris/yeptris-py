@@ -319,7 +319,40 @@ def test_set_multidoc_both_walks_agree():
     assert list(pyyaml.safe_load_all(text)) == [{"a"}, {"b"}]
 
 
+def _columns_walk_surfaces_collection_tags() -> bool:
+    """True when the loaded engine carries the collection-tag-text
+    surface (libyeptris with the py#166 values change). The record
+    drain has carried the tag text since the 44-byte record layout;
+    the COLUMNS drain gained it later, so the columns walk degrades to
+    the plain shapes on engines predating it."""
+    kinds, _tags, _is_keys, _bools, offs, lens, _pays, arena, close = \
+        yeptris._loader.F.drain_columns(b"!!set {x}", 1)
+    try:
+        for i in range(len(kinds)):
+            if kinds[i] == 8:  # _V_MAP_OPEN
+                return lens[i] != 0
+        return False
+    finally:
+        close()
+
+
 @pytest.mark.parametrize("text,expected", SET_OMAP_CASES)
 def test_set_omap_both_walks_agree(text, expected):
+    # the yaml facade and load_all ride the RECORD walk (its drain has
+    # carried collection tag text since the 44-byte record layout)
     assert pyml.safe_load(text) == expected
     assert yeptris._loader.load_all(text)[0] == expected
+    if _columns_walk_surfaces_collection_tags():
+        # the columnar walk agrees on engines that surface the tags
+        assert yeptris._loader.load_all_columns(text)[0] == expected
+
+
+def test_columns_walk_collection_tag_vintages():
+    # pinned per vintage, like the encoding test: an engine with the
+    # py#166 surface constructs the set; an older one degrades to the
+    # plain shape (never a crash, never a silent list)
+    text = b"!!set {a, b}"
+    if _columns_walk_surfaces_collection_tags():
+        assert yeptris._loader.load_all_columns(text)[0] == {"a", "b"}
+    else:
+        assert yeptris._loader.load_all_columns(text)[0] == {"a": None, "b": None}
