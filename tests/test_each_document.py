@@ -6,7 +6,10 @@ next line-start marker; the raw scan is the honest best effort), the
 quoted-marker one-unit framing, the unrecoverable tail terminating,
 the empty/comment streams, the schema option per frame, and
 depth-failure recovery with a bound. Skips on engines predating the
-slice accessor (the capability-probe law)."""
+slice accessor (the capability-probe law); the gate's CLOSED side —
+the ImportError an older engine must raise — is pinned by the mirror
+module tests/test_each_document_gate.py, so one side of the probe is
+always live."""
 
 import pytest
 
