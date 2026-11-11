@@ -236,17 +236,30 @@ def test_str_int_subclasses_are_unrepresentable_parity():
 
 # --- the dump kwargs (audit round 7: never a silent `_ignored`) ----------
 
-def test_width_is_accepted_and_block_output_is_width_invariant():
-    # the engine's best_width folds FLOW collections only (13B); the
-    # dump face emits block style, so the output is width-invariant
-    # today — a pinned divergence from PyYAML, whose block plain
-    # scalars fold. The emit-options route (yeptris_serialize_ex) is
-    # the binding's width knob the day flow emission lands.
+def _fold_default():
+    # the engine's #1257 flip folds block plain scalars at the default
+    # 80 (PyYAML parity — the old "pinned divergence" is gone); engines
+    # <= 0.6.61 unwrap. Probe the BEHAVIOR, not a version: the CI
+    # engine pin moves at its own cadence.
+    doc = {"text": "word " * 30}
+    return pyml.safe_dump(doc).count("\n") > 1
+
+
+FOLD_DEFAULT = _fold_default()
+
+
+def test_width_is_accepted_and_block_width_follows_the_fold():
     doc = {"text": "word " * 40, "k": list(range(30))}
     base = pyml.safe_dump(doc)
-    assert pyml.safe_dump(doc, width=20) == base
+    narrow = pyml.safe_dump(doc, width=20)
+    assert pyml.load(narrow) == doc
     assert pyml.safe_dump(doc, width=80) == base
-    assert pyml.load(pyml.safe_dump(doc, width=20)) == doc
+    if FOLD_DEFAULT:
+        # the flip: width 20 folds the plain scalar harder than the
+        # default 80
+        assert narrow.count("\n") > base.count("\n")
+    else:
+        assert narrow == base
 
 
 def test_width_rejects_non_positive():
@@ -271,7 +284,11 @@ def test_explicit_start_single_document():
 def test_dump_all_threads_width():
     doc = {"text": "word " * 40}
     base = pyml.safe_dump_all([doc, doc])
-    assert pyml.safe_dump_all([doc, doc], width=20) == base
+    narrow = pyml.safe_dump_all([doc, doc], width=20)
+    if FOLD_DEFAULT:
+        assert narrow.count("\n") > base.count("\n")
+    else:
+        assert narrow == base
 
 
 def test_pyyaml_only_dump_kwargs_are_accepted():
