@@ -9,7 +9,10 @@ name: Release wheels
 # clean venv before it is attached to the release. PyPI upload rides
 # twine from a maintainer machine until trusted publishing is
 # configured for this repo (same credentials story as the hand-built
-# releases).
+# releases). The riscv64 leg is the first EMULATED cross-arch leg:
+# the whole job rides `docker run --platform linux/riscv64` under
+# QEMU (the musl-leg container idiom) and runs the FULL test suite
+# against the installed wheel inside the emulation.
 
 on:
   push:
@@ -288,10 +291,66 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
 
+  # riscv64: the first emulated cross-arch leg (leptris/leptris-py#346's
+  # pattern). The whole leg rides `docker run --platform linux/riscv64`
+  # on a manylinux image under QEMU on the x86_64 runner — the musl
+  # leg's container idiom with setup-qemu in front — and the FULL
+  # pytest suite runs against the INSTALLED wheel inside the emulation.
+  # QEMU emulation is an order of magnitude slower than native: the
+  # generous timeout is the leg's whole budget, build included.
+  wheel-riscv64:
+    name: riscv64 wheel (qemu manylinux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
+
+      - name: Resolve the lockstep coordinates
+        shell: bash
+        run: scripts/resolve-version.sh >> "$GITHUB_ENV"
+
+      - name: Stage the checkout for the container
+        shell: bash
+        run: |
+          # the container's /work mount is RUNNER_TEMP — the wheel build
+          # consumes the staged tree (the workspace itself is not mounted)
+          mkdir -p "$RUNNER_TEMP/yeptris-py"
+          tar --exclude=.git --exclude=dist --exclude=build -cf - . | tar -xf - -C "$RUNNER_TEMP/yeptris-py"
+          test -f "$RUNNER_TEMP/yeptris-py/pyproject.toml"
+
+      - name: Build + test the riscv64 wheel (qemu container)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          # the payload (C build, wheel, repair, full suite + smoke
+          # against the installed wheel) is scripts/build_wheel_riscv64.sh
+          docker run --rm --platform linux/riscv64 \
+            -e C_TAG="${{ env.C_TAG }}" -e PKG_TAG="${{ env.PKG_TAG }}" \
+            -v "$RUNNER_TEMP:/work" -w /work \
+            quay.io/pypa/manylinux_2_39_riscv64:latest \
+            bash /work/yeptris-py/scripts/build_wheel_riscv64.sh
+          test -n "$(ls "$RUNNER_TEMP/dist/final"/*.whl 2>/dev/null)"
+
+      - name: Attach the riscv64 wheel to the release
+        shell: bash
+        run: |
+          gh release view "${{ env.PKG_TAG }}" >/dev/null 2>&1 || \
+            gh release create "${{ env.PKG_TAG }}" --title "${{ env.PKG_TAG }}" --generate-notes || \
+            echo "release created concurrently; uploading to it"
+          gh release upload "${{ env.PKG_TAG }}" "$RUNNER_TEMP/dist/final"/*.whl --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+
   publish:
     name: Publish to PyPI (Trusted Publisher)
     runs-on: ubuntu-latest
-    needs: [wheel, pure, wheel-musl]
+    needs: [wheel, pure, wheel-musl, wheel-riscv64]
     environment: pypi
     steps:
       - uses: actions/checkout@v4
