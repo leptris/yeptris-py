@@ -3,17 +3,26 @@ name: riscv64 wheel validation
 # The wheel-riscv64 leg's validation vehicle: release.yml does not run
 # on pull requests, and dispatching IT on a branch would attach wheels
 # to an existing release tag and race the PyPI publish job — so this
-# dispatch-only workflow runs the EXACT leg payload
-# (scripts/build_wheel_riscv64.sh: C build, vendored abi3 wheel,
-# auditwheel repair, FULL pytest suite + wheel smoke against the
-# installed wheel, all inside the emulated riscv64 container) with no
-# release side effects. Run it on a PR branch before merging emulated-
-# leg changes: gh workflow run wheel-riscv64-validation.yml --ref <branch>
+# workflow runs the EXACT leg payload (scripts/build_wheel_riscv64.sh:
+# C build, vendored abi3 wheel, auditwheel repair, FULL pytest suite +
+# wheel smoke against the installed wheel, all inside the emulated
+# riscv64 container) with no release side effects. It fires on pull
+# requests that touch the emulated leg, and can be dispatched on any
+# branch:
+#   gh workflow run wheel-riscv64-validation.yml --ref <branch>
 # (leptris/leptris-py#346's review discipline: an emulated leg is
 # validated, or its risk is spelled out, before it rides a release).
 
 on:
   workflow_dispatch:
+  # release.yml does not run on pull requests — validate leg changes
+  # ON the PR instead. Paths-gated: only edits that touch the emulated
+  # leg (release.yml, the payload script, this file) pay the QEMU tax.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/wheel-riscv64-validation.yml"
+      - "scripts/build_wheel_riscv64.sh"
 
 permissions:
   contents: read
