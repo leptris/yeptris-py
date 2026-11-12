@@ -1,0 +1,54 @@
+name: riscv64 wheel validation
+
+# The wheel-riscv64 leg's validation vehicle: release.yml does not run
+# on pull requests, and dispatching IT on a branch would attach wheels
+# to an existing release tag and race the PyPI publish job — so this
+# dispatch-only workflow runs the EXACT leg payload
+# (scripts/build_wheel_riscv64.sh: C build, vendored abi3 wheel,
+# auditwheel repair, FULL pytest suite + wheel smoke against the
+# installed wheel, all inside the emulated riscv64 container) with no
+# release side effects. Run it on a PR branch before merging emulated-
+# leg changes: gh workflow run wheel-riscv64-validation.yml --ref <branch>
+# (leptris/leptris-py#346's review discipline: an emulated leg is
+# validated, or its risk is spelled out, before it rides a release).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: riscv64 leg (qemu manylinux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
+
+      - name: Resolve the lockstep coordinates
+        shell: bash
+        run: scripts/resolve-version.sh >> "$GITHUB_ENV"
+
+      - name: Stage the checkout for the container
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/yeptris-py"
+          tar --exclude=.git --exclude=dist --exclude=build -cf - . | tar -xf - -C "$RUNNER_TEMP/yeptris-py"
+          test -f "$RUNNER_TEMP/yeptris-py/pyproject.toml"
+
+      - name: Build + test the riscv64 wheel (qemu container)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          docker run --rm --platform linux/riscv64 \
+            -e C_TAG="${{ env.C_TAG }}" -e PKG_TAG="${{ env.PKG_TAG }}" \
+            -v "$RUNNER_TEMP:/work" -w /work \
+            quay.io/pypa/manylinux_2_39_riscv64:latest \
+            bash /work/yeptris-py/scripts/build_wheel_riscv64.sh
+          test -n "$(ls "$RUNNER_TEMP/dist/final"/*.whl 2>/dev/null)"

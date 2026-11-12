@@ -149,13 +149,25 @@ was ~15x BEHIND — the fused materializer is the entire gap.
 
 ## Installing the native JSON engine (platform wheels)
 
-`pip install yeptris` on macOS (arm64) and manylinux (x86_64)
-installs **platform wheels** that vendor libyeptris and the native
-JSON materializer (abi3 — one wheel per platform serves CPython
-3.9+): zero compiler, zero env vars, `yeptris.json.engine()` is
-`native` out of the box. Every wheel is release-smoked in a clean
+`pip install yeptris` on macOS (arm64, x86_64), manylinux
+(x86_64, aarch64, riscv64), musllinux (x86_64, aarch64) and Windows
+(x64, ARM64) installs **platform wheels** that vendor libyeptris and
+the native JSON materializer (abi3 — one wheel per platform serves
+CPython 3.9+): zero compiler, zero env vars, `yeptris.json.engine()`
+is `native` out of the box. Every wheel is release-smoked in a clean
 venv before publish. Other platforms install the pure package (the
 strict-ffi JSON engine + YAML via libyeptris through the
 `YEPTRIS_LIB_PATH` ladder); building the extension from source is
 `YEPTRIS_LIB_PATH=... YEPTRIS_SRC=... python3 setup.py build_ext
 --inplace`.
+
+| Platform | Wheels | Notes |
+| --- | --- | --- |
+| Linux x86_64 (glibc) | abi3 | native runner |
+| Linux aarch64 (glibc) | abi3 | native runner |
+| Linux riscv64 (glibc) | abi3 | manylinux (glibc 2.31+); full suite under qemu (leptris-py#346's pattern) |
+| Linux x86_64 (musl) | abi3 | musllinux (Alpine) |
+| Linux aarch64 (musl) | abi3 | musllinux (Alpine) |
+| macOS arm64 + x86_64 | abi3 | universal-ish pair; x86_64 cross-built (`CMAKE_OSX_ARCHITECTURES`) |
+| Windows x64 + ARM64 | abi3 | `yeptris.dll` rides the wheel (retagged win_amd64 / win_arm64) |
+| other platforms | pure + sdist | strict-ffi engine; compiles the vendored source at install |
