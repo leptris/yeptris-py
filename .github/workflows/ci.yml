@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }} (py${{ matrix.python }})
+    name: Test on ${{ matrix.display_os || matrix.os }} (py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,7 +28,7 @@ jobs:
           - { os: ubuntu-latest, python: "3.9" }
         include:
           - { os: windows-11-arm, python: "3.11" }
-          - { os: ubuntu-24.04, python: "3.9" }
+          - { os: ubuntu-24.04, python: "3.9", display_os: "ubuntu-latest" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
