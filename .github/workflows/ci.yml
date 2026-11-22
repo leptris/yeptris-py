@@ -19,12 +19,16 @@ jobs:
         # BOTH arches per OS: linux amd64+arm64, macOS arm64
         # (macos-latest) + amd64 (macos-15-intel), Windows amd64+arm64
         # (win-arm64 Python starts at 3.11 — no 3.9 arm64 build exists)
+        # The 3.9 leg pins ubuntu-24.04: setup-python has no 3.9 build
+        # for ubuntu-latest's 26.04 image (#404-adjacent env drift).
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
         python: ["3.9", "3.13"]
         exclude:
           - { os: windows-11-arm, python: "3.9" }
+          - { os: ubuntu-latest, python: "3.9" }
         include:
           - { os: windows-11-arm, python: "3.11" }
+          - { os: ubuntu-24.04, python: "3.9" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
