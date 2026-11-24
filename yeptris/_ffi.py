@@ -409,6 +409,168 @@ except AttributeError:
     pass
 
 
+# --- the plan face (plan.h, yeptris#293; C 0.6.77) ----------------------
+# YEP_PLAN_* — the compiled plan's column kinds (plan.h).
+PLAN_INT = 0
+PLAN_FLOAT = 1
+PLAN_STR = 2
+PLAN_BOOL = 3
+
+# yeptris_plan_str (plan.h): the DOM leg's string cell — a (ptr, len)
+# view into the document. POINTER(c_char), NOT c_char_p: a c_char_p
+# field hands back an immutable copy scanned to the first NUL, and
+# scalar bytes legally carry NULs (the recorder arena's law, above).
+class _PlanStr(ctypes.Structure):
+    _fields_ = [("p", ctypes.POINTER(ctypes.c_char)),
+                ("len", ctypes.c_size_t)]
+
+
+PLAN_AVAILABLE = False
+try:
+    _lib.yeptris_plan_compile.argtypes = [ctypes.c_char_p, _sz,
+                                          ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_plan_compile.restype = _p
+    _lib.yeptris_plan_free.argtypes = [_p]
+    _lib.yeptris_plan_column_count.argtypes = [_p]
+    _lib.yeptris_plan_column_count.restype = _sz
+    # both walks return a malloc'd result the caller frees FIRST (the
+    # result borrows the tape/document it was walked against)
+    _lib.yeptris_tape_plan_walk.argtypes = [_p, _p, ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_tape_plan_walk.restype = _p
+    _lib.yeptris_document_plan_walk.argtypes = [_p, _p, ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_document_plan_walk.restype = _p
+    _lib.yeptris_plan_result_free.argtypes = [_p]
+    _lib.yeptris_plan_result_rows.argtypes = [_p]
+    _lib.yeptris_plan_result_rows.restype = _sz
+    _lib.yeptris_plan_result_kind.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_kind.restype = ctypes.c_int
+    _lib.yeptris_plan_result_ints.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_ints.restype = ctypes.POINTER(ctypes.c_int64)
+    _lib.yeptris_plan_result_floats.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_floats.restype = ctypes.POINTER(ctypes.c_double)
+    _lib.yeptris_plan_result_str_offs.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_str_offs.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.yeptris_plan_result_str_lens.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_str_lens.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.yeptris_plan_result_strs.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_strs.restype = ctypes.POINTER(_PlanStr)
+    _lib.yeptris_plan_result_nulls.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_nulls.restype = ctypes.POINTER(ctypes.c_uint8)
+    PLAN_AVAILABLE = True
+except AttributeError:
+    pass
+
+# --- the compact JSON tape (tape.h, TODO.restructure/85; C 0.6.77) ------
+# YEP_T_* — the record kinds column (tape.h).
+TAPE_DOC = 0
+TAPE_NULL = 1
+TAPE_TRUE = 2
+TAPE_FALSE = 3
+TAPE_INT = 4
+TAPE_FLOAT = 5
+TAPE_STR = 6
+TAPE_SEQ_OPEN = 7
+TAPE_MAP_OPEN = 8
+TAPE_CLOSE = 9
+TAPE_NUM = 10  # the lenient route only: the deferred number contract
+
+# yeptris_json_tape (tape.h): the CALLER allocates the tape struct, so
+# the FFI mirrors the header's layout — count/pointers (LP64-sized via
+# c_size_t/c_void_p), the two route ints, the convert-discovered
+# int_min, the source pointer + length (the spans borrow it), the
+# block base and the two long-key verdict bytes. The column pointers
+# are TYPED (uint8/uint32): hosts index them after
+# yeptris_tape_columns materializes the lenient route's lazy columns.
+# Zero-initialized is exactly the C "{0}" the parse functions expect
+# (they memset it).
+class _JsonTape(ctypes.Structure):
+    _fields_ = [("count", _sz),
+                ("kinds", ctypes.POINTER(ctypes.c_uint8)),
+                ("offs", ctypes.POINTER(ctypes.c_uint32)),
+                ("lens", ctypes.POINTER(ctypes.c_uint32)),
+                ("recs", _p), ("_cols_ready", ctypes.c_int),
+                ("_rec_primary", ctypes.c_int), ("int_min", ctypes.c_int64),
+                ("_src", _p), ("_srclen", _sz), ("_block", _p),
+                ("_long_key_known", ctypes.c_ubyte),
+                ("_long_key", ctypes.c_ubyte)]
+
+
+assert ctypes.sizeof(_JsonTape) == 88  # LP64: 82 bytes of fields -> 88
+
+TAPE_AVAILABLE = False
+try:
+    _lib.yeptris_parse_json_tape.argtypes = [ctypes.c_char_p, _sz,
+                                             ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_parse_json_tape.restype = ctypes.c_int
+    _lib.yeptris_parse_json_tape_lenient.argtypes = [ctypes.c_char_p, _sz,
+                                                     ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_parse_json_tape_lenient.restype = ctypes.c_int
+    _lib.yeptris_tape_free.argtypes = [ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_tape_columns.argtypes = [ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_tape_columns.restype = ctypes.c_int
+    _lib.yeptris_tape_convert.argtypes = [ctypes.POINTER(_JsonTape), _sz, _sz,
+                                          ctypes.POINTER(ctypes.c_int64),
+                                          ctypes.POINTER(ctypes.c_double)]
+    _lib.yeptris_tape_convert.restype = _sz
+    TAPE_AVAILABLE = True
+except AttributeError:
+    pass
+
+# --- the pull / iterparse event faces (events.h) ------------------------
+# YeptrisEvent (events.h): one event; the string fields point into the
+# owning model's storage and are valid UNTIL THE NEXT CALL — the event
+# wrappers copy at hand-out so the window never escapes into Python.
+class _Event(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("style", ctypes.c_int),
+                ("flow", ctypes.c_int), ("explicit_marker", ctypes.c_int),
+                ("implicit", ctypes.c_int),
+                ("value", ctypes.POINTER(ctypes.c_char)),
+                ("value_len", _sz),
+                ("anchor", ctypes.POINTER(ctypes.c_char)),
+                ("anchor_len", _sz),
+                ("tag", ctypes.POINTER(ctypes.c_char)),
+                ("tag_len", _sz),
+                ("line", ctypes.c_uint32), ("col", ctypes.c_uint32),
+                ("end_line", ctypes.c_uint32), ("end_col", ctypes.c_uint32)]
+
+
+assert ctypes.sizeof(_Event) == 24 + 48 + 16  # LP64: 5 ints (+pad), 6 ptrs, 4 u32
+
+EVENTS_AVAILABLE = False
+try:
+    _lib.yeptris_pull_new.argtypes = [ctypes.c_char_p, _sz]
+    _lib.yeptris_pull_new.restype = _p
+    _lib.yeptris_pull_next.argtypes = [_p]
+    _lib.yeptris_pull_next.restype = ctypes.POINTER(_Event)
+    _lib.yeptris_pull_next_batch.argtypes = [_p, ctypes.POINTER(_Event), _sz]
+    _lib.yeptris_pull_next_batch.restype = _sz
+    _lib.yeptris_pull_status.argtypes = [_p, ctypes.POINTER(ctypes.c_uint32),
+                                         ctypes.POINTER(ctypes.c_uint32)]
+    _lib.yeptris_pull_status.restype = ctypes.c_int
+    _lib.yeptris_pull_free.argtypes = [_p]
+    _lib.yeptris_iterparse_new.argtypes = [ctypes.c_char_p, _sz]
+    _lib.yeptris_iterparse_new.restype = _p
+    _lib.yeptris_iterparse_next.argtypes = [_p, ctypes.POINTER(_sz)]
+    _lib.yeptris_iterparse_next.restype = ctypes.POINTER(_Event)
+    _lib.yeptris_iterparse_status.argtypes = [
+        _p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+    _lib.yeptris_iterparse_status.restype = ctypes.c_int
+    _lib.yeptris_iterparse_free.argtypes = [_p]
+    EVENTS_AVAILABLE = True
+except AttributeError:
+    pass
+
+# The DOM leg of the plan walk needs a parsed document handle:
+# yeptris_parse (12_CORE) / yeptris_parse_ex (any schema) — present
+# since the first public releases, declared flat (no feature-detect).
+_lib.yeptris_parse.argtypes = [ctypes.c_char_p, _sz, ctypes.POINTER(ctypes.c_int)]
+_lib.yeptris_parse.restype = _p
+_lib.yeptris_parse_ex.argtypes = [ctypes.c_char_p, _sz,
+                                  ctypes.POINTER(_ParseOptions),
+                                  ctypes.POINTER(ctypes.c_int)]
+_lib.yeptris_parse_ex.restype = _p
+
+
 def last_error():
     line = ctypes.c_uint32(0)
     col = ctypes.c_uint32(0)
@@ -456,6 +618,16 @@ def read_owned(ptr, length) -> bytes:
         return ctypes.string_at(ptr, length)
     finally:
         free_buffer(ptr)
+
+
+def copy_span(ptr, length):
+    """The event-view contract: the string lives in the model's arena
+    and is valid UNTIL THE NEXT CALL — the caller copies within the
+    window. NULL (length 0 views the engine never materialized, e.g.
+    the empty scalar) reads as None, mirroring the C contract."""
+    if not ptr:
+        return None
+    return ctypes.string_at(ptr, length)
 
 
 class _ValueColumns(ctypes.Structure):

@@ -103,6 +103,47 @@ remains: the engine parses a stream in one bulk drain, so an invalid
 stream raises at the first iteration with no documents yielded
 (PyYAML's per-document parser yields the good prefix first).
 
+### Events, plan, tape (libyeptris >= 0.6.77)
+
+The engine's three columnar/streaming faces, mirroring the rs
+binding's `event`/`plan` modules and the tape:
+
+```python
+# needs libyeptris >= 0.6.77
+from yeptris import events, plan, tape
+
+# pull: the StAX cursor — one owned Event per yield (the C strings
+# live in the puller's arena only until the next call; the wrapper
+# copies, so Events outlive the cursor). next_batch is the bulk form.
+p = events.Puller("--- 1\n--- [2]\n")
+kinds = [e.kind.name for e in p]     # STREAM_START frames once,
+batches = [len(p.next_batch(4096))]  # DOCUMENT_* pair per document
+
+# iterparse: one document's event slice per yield
+for slice_ in events.iterparse("a: 1\n---\nb: 2\n"):
+    pass  # each slice runs DOCUMENT_START..DOCUMENT_END
+
+# plan: compiled once from a strict-JSON spec, applied in one C pass
+# to a document (YAML or JSON) or to a tape — typed columnar results,
+# no Python tree, no per-node dispatch
+plan_ = plan.Plan('{"kind": "seq", "path": "items", "children": ['
+                  '{"name": "id", "kind": "int"},'
+                  '{"name": "tag", "kind": "str"}]}')
+cols = plan_.walk("items:\n  - {id: 7, tag: x}\n")
+cols.to_dicts()   # [{'id': 7, 'tag': 'x'}]
+list(cols.ints(0))  # [7]
+
+# tape: the JSON columnar records (simdjson-class) — spans stay raw,
+# numbers convert at materialize; the lenient route defers number
+# grammar exactly like simdjson
+t = tape.parse_tape('{"items": [{"id": 7, "tag": "x"}]}')
+cols = plan_.walk_tape(t)
+t.values()        # {'items': [{'id': 7, 'tag': 'x'}]}
+```
+
+Older engines raise `YeptrisError`; `events.available()` /
+`plan.available()` / `tape.available()` feature-detect.
+
 ## Design
 
 One parse, one bulk drain: the record array and string arena are
