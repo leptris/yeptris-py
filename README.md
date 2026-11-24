@@ -103,6 +103,64 @@ remains: the engine parses a stream in one bulk drain, so an invalid
 stream raises at the first iteration with no documents yielded
 (PyYAML's per-document parser yields the good prefix first).
 
+## Query, tape, and event faces
+
+Three columnar/streaming faces over the same engine (each
+feature-detected — `yeptris.plan.available()` gates on the loaded
+libyeptris carrying it):
+
+```python
+# needs libyeptris >= 0.6.59 (the faces feature-detect: yeptris.plan.available())
+import yeptris.plan
+
+# a plan compiles ONCE from a strict-JSON spec, then walks documents
+# (YAML or JSON) in one C pass producing typed columns
+plan = yeptris.plan.compile_plan(
+    '{"kind":"seq","path":"items","children":['
+    '{"name":"id","kind":"int"},{"name":"name","kind":"str"}]}')
+result = plan.walk("items:\n  - id: 7\n    name: alpha\n  - id: 8\n    name: beta\n")
+result.rows        # 2
+result.kinds       # ('int', 'str')
+result.column(0)   # [7, 8]        — None at null/missing slots
+result.to_rows()   # [{'id': 7, 'name': 'alpha'}, {'id': 8, 'name': 'beta'}]
+# the JSON door: plan.walk_tape(yeptris.tape.parse_tape(json_bytes))
+```
+
+```python
+# needs libyeptris >= 0.6.59 (the faces feature-detect: <mod>.available())
+import yeptris.tape
+
+# the compact JSON tape: ONE record per token, strings zero-copy
+# spans, numbers record spans only (convert at materialize)
+tape = yeptris.tape.parse_tape(b'{"a": [1, 2.5]}')
+tape.count            # records, DOC boundary first
+tape.kind(3)          # yeptris.tape.KIND_INT
+tape.bytes(3)         # b'1' — the raw span
+tape.link(1)          # the MAP_OPEN's matching CLOSE
+n, ivals, dvals = tape.convert()   # number records -> typed values
+```
+
+```python
+# needs libyeptris >= 0.6.59 (the faces feature-detect: <mod>.available())
+import yeptris.events
+
+# pull: the StAX cursor — the run completes at construction, events
+# hand out one at a time (or in bulk batches); strings are COPIED, so
+# drained events outlive the puller
+with yeptris.events.pull("foo\n") as puller:
+    for ev in puller:            # one Event per step
+        ev.kind                  # stream_start / document_start / scalar / ...
+        ev.value, ev.style, ev.line, ev.col, ev.end_line, ev.end_col
+
+# iterparse: one DOCUMENT's event list per slice (memory bounded by
+# the largest document; the stream frames exactly once)
+for slice_ in yeptris.events.iterparse("a: 1\n---\nb: 2\n"):
+    len(slice_)                  # document one's events, document two's, [stream_end]
+```
+
+The engine's schema face (JSON Schema draft 2020-12, one-shot and
+compiled) is `yeptris.yaml`'s Validation section above.
+
 ## Design
 
 One parse, one bulk drain: the record array and string arena are

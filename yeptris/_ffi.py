@@ -230,6 +230,8 @@ _lib.yeptris_document_new_schema.restype = _p
 _lib.yeptris_document_free.argtypes = [_p]
 _lib.yeptris_parse_json.argtypes = [ctypes.c_char_p, _sz, ctypes.POINTER(ctypes.c_int)]
 _lib.yeptris_parse_json.restype = _p
+_lib.yeptris_parse.argtypes = [ctypes.c_char_p, _sz, ctypes.POINTER(ctypes.c_int)]
+_lib.yeptris_parse.restype = _p
 
 _lib.yeptris_document_set_root.argtypes = [_p, _p]
 _lib.yeptris_document_set_root.restype = ctypes.c_int
@@ -405,6 +407,145 @@ try:
         ctypes.POINTER(_sz)]
     _lib.yeptris_stream_iter_buffer.restype = ctypes.c_int
     STREAM_FRAMES_AVAILABLE = True
+except AttributeError:
+    pass
+
+
+# The compiled-plan walk (plan.h, engine #293): plan compiled from a
+# strict-JSON spec, applied to a document (yeptris_parse) or a JSON
+# tape in one C pass producing typed COLUMNAR results. Feature-detected
+# (the validate pattern) — yeptris.plan gates on it.
+
+# yeptris_plan_str (plan.h): the DOM leg's string cell — a (ptr, len)
+# view into the document. POINTER(c_char), NOT c_char_p: a c_char_p
+# field hands back an immutable copy scanned to the first NUL, and
+# scalar bytes legally carry NULs (the arena's law, above).
+class _PlanStr(ctypes.Structure):
+    _fields_ = [("p", ctypes.POINTER(ctypes.c_char)),
+                ("len", ctypes.c_size_t)]
+
+
+# yeptris_json_tape (tape.h): the caller-allocated tape. Layout
+# mirrored from the header; the two underscore route ints and the
+# long-key bytes are opaque to hosts.
+class _JsonTape(ctypes.Structure):
+    _fields_ = [("count", ctypes.c_size_t),
+                ("kinds", ctypes.POINTER(ctypes.c_uint8)),
+                ("offs", ctypes.POINTER(ctypes.c_uint32)),
+                ("lens", ctypes.POINTER(ctypes.c_uint32)),
+                ("recs", ctypes.c_void_p),
+                ("_cols_ready", ctypes.c_int),
+                ("_rec_primary", ctypes.c_int),
+                ("int_min", ctypes.c_int64),
+                ("_src", ctypes.c_void_p),
+                ("_srclen", ctypes.c_size_t),
+                ("_block", ctypes.c_void_p),
+                ("_long_key_known", ctypes.c_ubyte),
+                ("_long_key", ctypes.c_ubyte)]
+
+
+# YeptrisEvent (events.h): one event, string fields pointing into the
+# owning model's storage. C ints for the enum/int fields, POINTER
+# (c_char) + length for each of value/anchor/tag.
+class _Event(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("style", ctypes.c_int),
+                ("flow", ctypes.c_int), ("explicit_marker", ctypes.c_int),
+                ("implicit", ctypes.c_int),
+                ("value", ctypes.POINTER(ctypes.c_char)),
+                ("value_len", ctypes.c_size_t),
+                ("anchor", ctypes.POINTER(ctypes.c_char)),
+                ("anchor_len", ctypes.c_size_t),
+                ("tag", ctypes.POINTER(ctypes.c_char)),
+                ("tag_len", ctypes.c_size_t),
+                ("line", ctypes.c_uint32), ("col", ctypes.c_uint32),
+                ("end_line", ctypes.c_uint32), ("end_col", ctypes.c_uint32)]
+
+
+PLAN_AVAILABLE = False
+try:
+    _lib.yeptris_plan_compile.argtypes = [ctypes.c_char_p, _sz,
+                                          ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_plan_compile.restype = _p
+    _lib.yeptris_plan_free.argtypes = [_p]
+    _lib.yeptris_plan_column_count.argtypes = [_p]
+    _lib.yeptris_plan_column_count.restype = _sz
+    _lib.yeptris_document_plan_walk.argtypes = [_p, _p,
+                                                ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_document_plan_walk.restype = _p
+    _lib.yeptris_tape_plan_walk.argtypes = [_p, _p,
+                                            ctypes.POINTER(ctypes.c_int)]
+    _lib.yeptris_tape_plan_walk.restype = _p
+    _lib.yeptris_plan_result_free.argtypes = [_p]
+    _lib.yeptris_plan_result_rows.argtypes = [_p]
+    _lib.yeptris_plan_result_rows.restype = _sz
+    _lib.yeptris_plan_result_kind.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_kind.restype = ctypes.c_int
+    _lib.yeptris_plan_result_ints.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_ints.restype = ctypes.POINTER(ctypes.c_int64)
+    _lib.yeptris_plan_result_floats.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_floats.restype = ctypes.POINTER(ctypes.c_double)
+    _lib.yeptris_plan_result_str_offs.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_str_offs.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.yeptris_plan_result_str_lens.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_str_lens.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.yeptris_plan_result_strs.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_strs.restype = ctypes.POINTER(_PlanStr)
+    _lib.yeptris_plan_result_nulls.argtypes = [_p, _sz]
+    _lib.yeptris_plan_result_nulls.restype = ctypes.POINTER(ctypes.c_uint8)
+    PLAN_AVAILABLE = True
+except AttributeError:
+    pass
+
+# The compact JSON tape (tape.h): ONE record per token in three
+# parallel columns — kind byte, off, len. The yeptris_json_tape struct
+# is NOT opaque (the caller allocates it), so the FFI mirrors the
+# header's layout: count/pointers (LP64-sized via c_size_t/c_void_p),
+# the two route ints, the convert-discovered int_min, the source
+# pointer + length (the spans borrow it), the block base and the two
+# long-key verdict bytes.
+TAPE_AVAILABLE = False
+try:
+    _lib.yeptris_parse_json_tape.argtypes = [ctypes.c_char_p, _sz,
+                                             ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_parse_json_tape.restype = ctypes.c_int
+    _lib.yeptris_parse_json_tape_lenient.argtypes = [ctypes.c_char_p, _sz,
+                                                     ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_parse_json_tape_lenient.restype = ctypes.c_int
+    _lib.yeptris_tape_free.argtypes = [ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_tape_columns.argtypes = [ctypes.POINTER(_JsonTape)]
+    _lib.yeptris_tape_columns.restype = ctypes.c_int
+    _lib.yeptris_tape_convert.argtypes = [ctypes.POINTER(_JsonTape), _sz, _sz,
+                                          ctypes.POINTER(ctypes.c_int64),
+                                          ctypes.POINTER(ctypes.c_double)]
+    _lib.yeptris_tape_convert.restype = _sz
+    TAPE_AVAILABLE = True
+except AttributeError:
+    pass
+
+# The pull and iterparse event faces (events.h). Event strings live in
+# the model's arena and are only valid until the next call — the
+# wrappers copy at hand-out (the Event dataclass owns its bytes).
+EVENTS_AVAILABLE = False
+try:
+    _lib.yeptris_pull_new.argtypes = [ctypes.c_char_p, _sz]
+    _lib.yeptris_pull_new.restype = _p
+    _lib.yeptris_pull_next.argtypes = [_p]
+    _lib.yeptris_pull_next.restype = ctypes.POINTER(_Event)
+    _lib.yeptris_pull_next_batch.argtypes = [_p, ctypes.POINTER(_Event), _sz]
+    _lib.yeptris_pull_next_batch.restype = _sz
+    _lib.yeptris_pull_status.argtypes = [_p, ctypes.POINTER(ctypes.c_uint32),
+                                         ctypes.POINTER(ctypes.c_uint32)]
+    _lib.yeptris_pull_status.restype = ctypes.c_int
+    _lib.yeptris_pull_free.argtypes = [_p]
+    _lib.yeptris_iterparse_new.argtypes = [ctypes.c_char_p, _sz]
+    _lib.yeptris_iterparse_new.restype = _p
+    _lib.yeptris_iterparse_next.argtypes = [_p, ctypes.POINTER(_sz)]
+    _lib.yeptris_iterparse_next.restype = ctypes.POINTER(_Event)
+    _lib.yeptris_iterparse_status.argtypes = [
+        _p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+    _lib.yeptris_iterparse_status.restype = ctypes.c_int
+    _lib.yeptris_iterparse_free.argtypes = [_p]
+    EVENTS_AVAILABLE = True
 except AttributeError:
     pass
 
