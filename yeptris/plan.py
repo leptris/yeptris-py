@@ -331,16 +331,29 @@ def _collect(r, ncols: int, *, source, names) -> PlanResult:
                         source[offs[i]:offs[i] + lens[i]].decode("utf-8")
                         for i in range(rows)]
                 else:
-                    # the DOM leg: (ptr,len) views into the document
+                    # the DOM leg: (ptr,len) views into the document.
+                    # THE NULL-SLOT LAW: the engine leaves the cell for
+                    # a null-marked row UNSPECIFIED (plan.h — "missing
+                    # or null leaves mark the slot null"; the typed
+                    # slot carries garbage), so the bitmap gates every
+                    # cell read — never touch cells[i] for a null row
+                    # (glibc hands back dirty heap where macOS
+                    # zero-fills: the segfault the CI leg caught)
                     sp = F._lib.yeptris_plan_result_strs(r, c)
                     if not sp:
                         strs = []
                     else:
-                        cells = ctypes.cast(sp, ctypes.POINTER(F._PlanStr * rows))
-                        strs = [
-                            (ctypes.string_at(cell.p, cell.len).decode("utf-8")
-                             if cell.p else "")
-                            for cell in cells.contents]
+                        cells = ctypes.cast(
+                            sp, ctypes.POINTER(F._PlanStr * rows)).contents
+                        strs = []
+                        for i in range(rows):
+                            if nulls[i]:
+                                strs.append("")
+                                continue
+                            p = cells[i].p
+                            strs.append(
+                                ctypes.string_at(p, cells[i].len).decode(
+                                    "utf-8") if p else "")
             columns.append({"ints": ints, "floats": floats,
                             "strs": strs, "nulls": nulls})
         return PlanResult(rows, kinds, columns, names)

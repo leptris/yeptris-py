@@ -85,10 +85,12 @@ def test_walk_yaml_seq_of_maps():
         r = plan.walk(YAML_DOC)
         assert r.rows == 3
         assert r.kinds == ["int", "str", "bool", "float"]
-        assert list(r.ints(0)) == [7, 8, 0]      # the null slot is unspecified
+        # the PRESENT slots carry the values; the null-marked slots are
+        # UNSPECIFIED (plan.h) — never asserted, only gated by nulls()
+        assert list(r.ints(0))[:2] == [7, 8]
         assert r.strs(1) == ["x", "y", "z"]
-        assert list(r.ints(2)) == [1, 0, 0]      # BOOL reads 0/1
-        assert list(r.floats(3)) == [1.5, 2.5, 0.0]
+        assert list(r.ints(2))[:2] == [1, 0]      # BOOL reads 0/1
+        assert list(r.floats(3))[:2] == [1.5, 2.5]
         assert r.nulls(0) == b"\x00\x00\x01"
         assert r.nulls(1) == b"\x00\x00\x00"
         assert r.nulls(2) == b"\x00\x00\x01"
@@ -113,6 +115,21 @@ def test_column_convenience_forms_typed_nones():
         assert r.column(1) == ["x", "y", "z"]
         assert r.column(2) == [True, False, None]
         assert r.column(3) == [1.5, 2.5, None]
+    finally:
+        plan.close()
+
+
+def test_missing_str_leaf_never_reads_the_null_cell():
+    # the CI-caught glibc segfault: a null-marked STR row's cell is
+    # UNSPECIFIED (plan.h) — the bitmap must gate the read (dirty-heap
+    # pointers where macOS zero-fills)
+    plan = Plan(SPEC)
+    try:
+        r = plan.walk("items:\n  - {id: 1}\n  - {id: 2, tag: y}\n")
+        assert r.nulls(1) == b"\x01\x00"
+        assert r.strs(1) == ["", "y"]
+        assert r.column(1) == [None, "y"]
+        assert r.to_dicts()[0]["tag"] is None
     finally:
         plan.close()
 
