@@ -204,3 +204,20 @@ def test_iterparse_markerless_frames_too():
 def test_iterparse_error_raises():
     with pytest.raises(ParseError):
         list(iterparse("bad: [\n"))
+
+
+def test_iterparse_midstream_error_partial_slice_then_raises():
+    # the engine's capture-then-report contract: the run's events up
+    # to the failure are YIELDED as the bad document's (partial)
+    # slice; the NEXT call raises with the error's position
+    it = iterparse("a: 1\n---\nbad: [\n")
+    with it:
+        assert kinds(next(it)) == [
+            "stream_start", "document_start", "mapping_start", "scalar",
+            "scalar", "mapping_end", "document_end"]
+        assert kinds(next(it)) == [
+            "document_start", "mapping_start", "scalar", "sequence_start"]
+        with pytest.raises(ParseError):
+            next(it)
+        assert it.status()[0] != K.OK
+        assert (it.status()[1], it.status()[2]) == (3, 1)
