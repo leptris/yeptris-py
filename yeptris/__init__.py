@@ -21,6 +21,9 @@ from ._errors import (  # noqa: F401 — the taxonomy, at package level too
 )
 from ._dumper import dump, dump_all
 from ._loader import load, load_all
+from ._validate import Schema  # noqa: F401 — the compiled JSON-Schema
+# economy's class, at package level (#209); the full face (compile_schema,
+# validate, Diagnostic, ...) rides the `yeptris.schema` submodule
 
 try:  # pyproject.toml is the version SSOT; the dev tree (not
     # installed) falls back to reading it directly
@@ -42,6 +45,7 @@ except Exception:  # pragma: no cover - metadata always present when installed
 
 __all__ = [
     "load", "load_all", "dump", "dump_all",
+    "Schema",
     "YeptrisError", "ParseError",
     "YAMLError", "MarkedYAMLError", "ValidationError",
     "ReaderError", "ScannerError", "ParserError", "ComposerError",
